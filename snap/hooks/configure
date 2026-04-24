@@ -1,0 +1,3 @@
+#!/bin/sh
+# configure hook: validate snap set options and update snap health accordingly.
+# Implementation pending Task N (snap packaging).

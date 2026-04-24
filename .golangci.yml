@@ -1,0 +1,8 @@
+linters:
+  enable:
+    - errcheck
+    - staticcheck
+    - govet
+
+run:
+  go: "1.22"
