@@ -1,17 +1,17 @@
 name: landscape-client-core
 title: Landscape Client for Ubuntu Core
 base: core24
-version: git
+version: 26.04
 summary: Landscape client for Ubuntu Core devices
 description: |
   Manages Ubuntu Core devices with Canonical Landscape.
   Provides system monitoring and remote management.
 confinement: strict
 grade: stable
-contact: info@canonical.com
+contact: https://www.canonical.com/contact-us
 license: GPL-3.0+
-donation: donate@canonical.com
-issues: http://www.canonical.com/issue
+donation: https://www.canonical.com/donate
+issues: https://www.canonical.com/issue
 source-code: https://www.github.com/canonical/
 website: https://www.canonical.com
 
