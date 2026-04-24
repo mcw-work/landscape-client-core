@@ -1,0 +1,156 @@
+package transport
+
+import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"time"
+)
+
+const (
+	defaultConnectTimeout = 30 * time.Second
+	contentType           = "application/octet-stream"
+)
+
+// Config configures a transport Client.
+type Config struct {
+	SSLPublicKey   string        // path to CA cert file; "" means use system CAs
+	HTTPProxy      string        // proxy URL for http:// requests; "" means no proxy
+	HTTPSProxy     string        // proxy URL for https:// requests; "" means no proxy
+	ConnectTimeout time.Duration // default: 30s
+	TotalTimeout   time.Duration // default: 600s
+	UserAgent      string        // e.g. "landscape-client-core/1.0"
+}
+
+// HTTPError is returned when the server responds with a non-2xx status code.
+type HTTPError struct {
+	StatusCode int
+	Body       []byte
+	URL        string
+}
+
+func (e *HTTPError) Error() string {
+	if e.URL != "" {
+		return fmt.Sprintf("transport: HTTP %d from %s", e.StatusCode, e.URL)
+	}
+	return fmt.Sprintf("transport: HTTP %d", e.StatusCode)
+}
+
+// Client sends HTTP POST requests with bpickle-encoded bodies.
+type Client struct {
+	httpClient   *http.Client
+	userAgent    string
+	totalTimeout time.Duration
+}
+
+// New creates a Client from cfg.
+// Returns an error if SSLPublicKey is set but the file cannot be loaded or parsed.
+func New(cfg Config) (*Client, error) {
+	tlsCfg := &tls.Config{}
+
+	if cfg.SSLPublicKey != "" {
+		pemData, err := os.ReadFile(cfg.SSLPublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("transport: reading SSL public key: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pemData) {
+			return nil, fmt.Errorf("transport: no valid PEM certificates found in %s", cfg.SSLPublicKey)
+		}
+		tlsCfg.RootCAs = pool
+	}
+
+	connectTimeout := cfg.ConnectTimeout
+	if connectTimeout == 0 {
+		connectTimeout = defaultConnectTimeout
+	}
+
+	httpProxy := cfg.HTTPProxy
+	httpsProxy := cfg.HTTPSProxy
+
+	proxyFunc := func(req *http.Request) (*url.URL, error) {
+		scheme := req.URL.Scheme
+		if scheme == "https" && httpsProxy != "" {
+			return url.Parse(httpsProxy)
+		}
+		if scheme == "http" && httpProxy != "" {
+			return url.Parse(httpProxy)
+		}
+		return http.ProxyFromEnvironment(req)
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig:     tlsCfg,
+		Proxy:               proxyFunc,
+		TLSHandshakeTimeout: connectTimeout,
+		DialContext: (&net.Dialer{
+			Timeout: connectTimeout,
+		}).DialContext,
+	}
+
+	httpClient := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	return &Client{
+		httpClient:   httpClient,
+		userAgent:    cfg.UserAgent,
+		totalTimeout: cfg.TotalTimeout,
+	}, nil
+}
+
+// Post sends a POST request to rawURL with the given body and headers.
+// Returns the response body on success (2xx), or HTTPError for non-2xx responses.
+// The caller owns the returned bytes.
+func (c *Client) Post(ctx context.Context, rawURL string, headers map[string]string, body []byte) ([]byte, error) {
+	if c.totalTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.totalTimeout)
+		defer cancel()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("transport: creating request: %w", err)
+	}
+
+	// Set default headers.
+	req.Header.Set("Content-Type", contentType)
+	if c.userAgent != "" {
+		req.Header.Set("User-Agent", c.userAgent)
+	}
+
+	// Apply caller-provided headers (can override User-Agent, but Content-Type
+	// is re-enforced after to prevent override).
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	// Always enforce Content-Type.
+	req.Header.Set("Content-Type", contentType)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("transport: sending request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		const maxErrBody = 4096
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: errBody, URL: rawURL}
+	}
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("transport: reading response from %s: %w", rawURL, err)
+	}
+	return respBody, nil
+}
