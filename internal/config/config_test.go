@@ -90,7 +90,7 @@ func TestLoad_InvalidURL_NoScheme(t *testing.T) {
 
 func TestLoad_DurationField_Valid(t *testing.T) {
 	m := validRequired()
-	m["exchange-interval"] = "30m"
+	m["exchange-interval"] = "1800"
 	cfg, err := config.Load(m)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -102,7 +102,7 @@ func TestLoad_DurationField_Valid(t *testing.T) {
 
 func TestLoad_DurationField_Invalid(t *testing.T) {
 	m := validRequired()
-	m["exchange-interval"] = "not-a-duration"
+	m["exchange-interval"] = "not-a-number"
 	_, err := config.Load(m)
 	if err == nil {
 		t.Fatal("expected error for invalid duration")
@@ -136,9 +136,9 @@ func TestLoad_OptionalFieldsAbsent_Defaults(t *testing.T) {
 
 func TestLoad_OptionalFieldsPresent_Override(t *testing.T) {
 	m := validRequired()
-	m["exchange-interval"] = "5m"
-	m["urgent-exchange-interval"] = "10s"
-	m["ping-interval"] = "1m"
+	m["exchange-interval"] = "300"
+	m["urgent-exchange-interval"] = "10"
+	m["ping-interval"] = "60"
 	m["ssl-public-key"] = "/etc/ssl/ca.crt"
 	m["http-proxy"] = "http://proxy.example.com"
 	m["https-proxy"] = "https://proxy.example.com"

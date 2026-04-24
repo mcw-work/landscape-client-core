@@ -18,6 +18,10 @@ import (
 const (
 	defaultConnectTimeout = 30 * time.Second
 	contentType           = "application/octet-stream"
+
+	// maxResponseBytes caps successful response bodies to prevent a
+	// misbehaving or compromised server from exhausting process memory.
+	maxResponseBytes = 32 * 1024 * 1024 // 32 MiB
 )
 
 // Config configures a transport Client.
@@ -54,7 +58,9 @@ type Client struct {
 // New creates a Client from cfg.
 // Returns an error if SSLPublicKey is set but the file cannot be loaded or parsed.
 func New(cfg Config) (*Client, error) {
-	tlsCfg := &tls.Config{}
+	tlsCfg := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
 
 	if cfg.SSLPublicKey != "" {
 		pemData, err := os.ReadFile(cfg.SSLPublicKey)
@@ -88,12 +94,12 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	transport := &http.Transport{
-		TLSClientConfig:     tlsCfg,
-		Proxy:               proxyFunc,
-		TLSHandshakeTimeout: connectTimeout,
-		DialContext: (&net.Dialer{
-			Timeout: connectTimeout,
-		}).DialContext,
+		TLSClientConfig:       tlsCfg,
+		Proxy:                 proxyFunc,
+		TLSHandshakeTimeout:   connectTimeout,
+		DialContext:           (&net.Dialer{Timeout: connectTimeout}).DialContext,
+		MaxIdleConnsPerHost:   1,
+		IdleConnTimeout:       90 * time.Second,
 	}
 
 	httpClient := &http.Client{
@@ -138,7 +144,7 @@ func (c *Client) doRequest(ctx context.Context, method, rawURL string, inBody io
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
 		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: errBody, URL: rawURL}
 	}
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("transport: reading response from %s: %w", rawURL, err)
 	}

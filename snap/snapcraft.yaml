@@ -20,6 +20,8 @@ apps:
     command: bin/landscape-client-core
     daemon: simple
     restart-condition: on-failure
+    environment:
+      GOGC: "50"
     plugs:
       - network
       - snapd-control
@@ -35,6 +37,8 @@ apps:
       - network
 
 hooks:
+  install: {}
+  post-refresh: {}
   configure:
     plugs:
       - network
@@ -47,5 +51,6 @@ parts:
       - go/1.22/stable
     stage-packages:
       - lshw
+      - curl
     override-build: |
-      craftctl default
+      go build -ldflags="-s -w" -trimpath -o "$CRAFT_PART_INSTALL/bin/" ./cmd/landscape-client-core/ ./cmd/landscape-client-core-config/

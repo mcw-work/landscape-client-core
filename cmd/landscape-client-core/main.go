@@ -91,6 +91,7 @@ func main() {
 	exc := exchange.New(cfg, store, tc)
 
 	// Create monitor runner with all plugins.
+	snapPackages := monitor.NewSnapPackages(snapdClient)
 	plugins := []monitor.Plugin{
 		monitor.NewCPUUsage(),
 		monitor.NewMemoryInfo(),
@@ -105,16 +106,19 @@ func main() {
 		monitor.NewMountInfo(),
 		monitor.NewUsers(),
 		monitor.NewHardwareInfo(),
-		monitor.NewSnapPackages(snapdClient),
+		snapPackages,
 		monitor.NewSnapServices(snapdClient),
 	}
 	monRunner := monitor.New(plugins, exc, store)
 
+	// sendSnapUpdate sends an immediate snaps message after a snap operation.
+	sendSnapUpdate := func() { snapPackages.SendNow(context.Background(), exc) }
+
 	// Create manager runner with all handlers.
 	handlers := []manager.Handler{
-		&manager.InstallSnapHandler{Snapd: snapdClient},
-		&manager.RemoveSnapHandler{Snapd: snapdClient},
-		&manager.RefreshSnapHandler{Snapd: snapdClient},
+		&manager.InstallSnapHandler{Snapd: snapdClient, OnComplete: sendSnapUpdate},
+		&manager.RemoveSnapHandler{Snapd: snapdClient, OnComplete: sendSnapUpdate},
+		&manager.RefreshSnapHandler{Snapd: snapdClient, OnComplete: sendSnapUpdate},
 		&manager.StartServiceHandler{Snapd: snapdClient},
 		&manager.StopServiceHandler{Snapd: snapdClient},
 		&manager.RestartServiceHandler{Snapd: snapdClient},

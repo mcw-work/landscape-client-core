@@ -168,12 +168,14 @@ func (e *Exchange) Run(ctx context.Context) error {
 	}
 }
 
-// Send enqueues a message for the next exchange.
+// Send enqueues a message for the next exchange and wakes the exchange loop
+// so the message is delivered promptly rather than waiting for the next timer tick.
 // Safe to call from multiple goroutines.
 func (e *Exchange) Send(_ context.Context, msg Message) error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.pending = append(e.pending, msg)
+	e.mu.Unlock()
+	e.TriggerExchange()
 	return nil
 }
 
@@ -191,6 +193,9 @@ func (e *Exchange) sendOperationResult(ctx context.Context, operationID int64, s
 		"operation-id": operationID,
 		"status":       int64(status),
 		"result-text":  output,
+		// The Python broker always injects timestamp (as int) before sending.
+		// The Landscape server uses it to display when the operation completed.
+		"timestamp": int64(time.Now().Unix()),
 	}
 	if resultCode != nil {
 		msg["result-code"] = *resultCode

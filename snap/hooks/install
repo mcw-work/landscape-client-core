@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+set_default() {
+    key="$1"
+    value="$2"
+    if [ -z "$(snapctl get "$key")" ]; then
+        snapctl set "$key=$value"
+    fi
+}
+
+set_default exchange-interval 900
+set_default urgent-exchange-interval 60
+set_default ping-interval 30

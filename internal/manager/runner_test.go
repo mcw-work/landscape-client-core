@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -135,8 +136,8 @@ func TestRunner_AllHandlersRegistered(t *testing.T) {
 	source := newMockCommandSource()
 	sink := &mockResultSink{}
 
-	h1 := newFakeHandler("install-snap")
-	h2 := newFakeHandler("remove-snap")
+	h1 := newFakeHandler("install-snaps")
+	h2 := newFakeHandler("remove-snaps")
 	h3 := newFakeHandler("reboot")
 
 	runner := NewRunner([]Handler{h1, h2, h3}, source, sink)
@@ -147,7 +148,7 @@ func TestRunner_AllHandlersRegistered(t *testing.T) {
 		t.Fatalf("expected 3 subscriptions, got %d: %v", len(subscribed), subscribed)
 	}
 
-	want := map[string]bool{"install-snap": true, "remove-snap": true, "reboot": true}
+	want := map[string]bool{"install-snaps": true, "remove-snaps": true, "reboot": true}
 	for _, typ := range subscribed {
 		if !want[typ] {
 			t.Errorf("unexpected subscription: %q", typ)
@@ -161,12 +162,12 @@ func TestRunner_InboundMessageDispatched(t *testing.T) {
 	source := newMockCommandSource()
 	sink := &mockResultSink{}
 
-	h := newFakeHandler("install-snap")
+	h := newFakeHandler("install-snaps")
 	runner := NewRunner([]Handler{h}, source, sink)
 	runner.Register()
 
 	msg := exchange.Message{"operation-id": int64(42), "name": "my-snap"}
-	source.Dispatch(context.Background(), "install-snap", msg)
+	source.Dispatch(context.Background(), "install-snaps", msg)
 
 	got, ok := waitChan(h.called, 2*time.Second)
 	if !ok {
@@ -223,19 +224,19 @@ func TestRunner_HandlerErrorLogged(t *testing.T) {
 	// Redirect log output so we can inspect it.
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(nil) })
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
 	source := newMockCommandSource()
 	sink := &mockResultSink{}
 
-	h := newFakeHandler("remove-snap")
+	h := newFakeHandler("remove-snaps")
 	h.err = errors.New("something went wrong")
 
 	runner := NewRunner([]Handler{h}, source, sink)
 	runner.Register()
 
 	msg := exchange.Message{"operation-id": int64(7)}
-	source.Dispatch(context.Background(), "remove-snap", msg)
+	source.Dispatch(context.Background(), "remove-snaps", msg)
 
 	// Wait for the handler goroutine to complete.
 	_, ok := waitChan(h.called, 2*time.Second)

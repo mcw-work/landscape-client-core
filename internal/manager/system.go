@@ -13,6 +13,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
+
+	"github.com/godbus/dbus/v5"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
 )
@@ -23,21 +26,36 @@ const maxScriptOutputBytes = 5 * 1024 * 1024
 
 const truncationMarker = "\n**OUTPUT TRUNCATED**"
 
-// Executor runs an external command. Injectable for testing.
-type Executor func(ctx context.Context, name string, args ...string) error
+// dbusShutdown calls org.freedesktop.login1.Manager Reboot or PowerOff via DBus.
+// interactive is passed as false (non-interactive, matches Python client's True
+// which means "allow polkit interactive auth" — on Ubuntu Core this is fine either way).
+func dbusShutdown(reboot bool) error {
+	conn, err := dbus.ConnectSystemBus()
+	if err != nil {
+		return fmt.Errorf("connecting to system bus: %w", err)
+	}
+	defer conn.Close()
 
-func defaultExecutor(ctx context.Context, name string, args ...string) error {
-	return exec.CommandContext(ctx, name, args...).Run()
+	obj := conn.Object("org.freedesktop.login1", "/org/freedesktop/login1")
+
+	method := "org.freedesktop.login1.Manager.PowerOff"
+	if reboot {
+		method = "org.freedesktop.login1.Manager.Reboot"
+	}
+
+	return obj.Call(method, 0, false).Store()
 }
 
 // ShutdownHandler handles "shutdown" commands.
 type ShutdownHandler struct {
-	Exec Executor
+	// Shutdown is the function used to trigger a shutdown or reboot.
+	// Defaults to dbusShutdown; injectable for testing.
+	Shutdown func(reboot bool) error
 }
 
-// NewShutdownHandler creates a ShutdownHandler with the default executor.
+// NewShutdownHandler creates a ShutdownHandler with the default DBus executor.
 func NewShutdownHandler() *ShutdownHandler {
-	return &ShutdownHandler{Exec: defaultExecutor}
+	return &ShutdownHandler{Shutdown: dbusShutdown}
 }
 
 func (h *ShutdownHandler) MessageType() string { return "shutdown" }
@@ -54,12 +72,13 @@ func (h *ShutdownHandler) Handle(ctx context.Context, msg exchange.Message, resu
 		return err
 	}
 
-	subcmd := "poweroff"
+	action := "poweroff"
 	if reboot {
-		subcmd = "reboot"
+		action = "reboot"
 	}
-
-	if err := h.Exec(ctx, "systemctl", subcmd); err != nil {
+	log.Printf("shutdown: requesting %s via DBus", action)
+	if err := h.Shutdown(reboot); err != nil {
+		log.Printf("shutdown: %s failed: %v", action, err)
 		_ = result.SendResult(ctx, opID, exchange.StatusFailed, err.Error())
 	}
 	return nil
@@ -215,6 +234,7 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 	}
 
 	// Run the script.
+	log.Printf("execute-script: op=%d interpreter=%q script=%q time-limit=%d", opID, interpreter, scriptPath, timeLimit)
 	cmd := exec.CommandContext(execCtx, interpreterBin, append(interpreterArgs, scriptPath)...)
 	if len(cmdEnv) > 0 {
 		cmd.Env = cmdEnv
@@ -225,7 +245,13 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 	cmd.Stderr = lw
 
 	runErr := cmd.Run()
-	output := buf.String()
+	// Sanitize output to valid UTF-8, replacing invalid bytes with the Unicode
+	// replacement character — matching the Python client's
+	// data.decode("utf-8", "replace") behaviour. This ensures the bpickle u-type
+	// field in the operation-result message is always valid UTF-8 so the
+	// Landscape server can parse the exchange payload without error.
+	output := strings.ToValidUTF8(buf.String(), string(utf8.RuneError))
+	log.Printf("execute-script: op=%d run complete: err=%v output-bytes=%d", opID, runErr, len(output))
 
 	if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
 		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 102, output)

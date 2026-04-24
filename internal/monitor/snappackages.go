@@ -46,6 +46,13 @@ func (p *SnapPackagesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 	}
 }
 
+// SendNow immediately collects and sends the current snap list to sink.
+// Called by snap manager handlers after install/remove/refresh to give
+// the server an up-to-date snap list without waiting for the next tick.
+func (p *SnapPackagesPlugin) SendNow(ctx context.Context, sink exchange.MessageSink) {
+	p.send(ctx, sink)
+}
+
 func (p *SnapPackagesPlugin) send(ctx context.Context, sink exchange.MessageSink) {
 	installed := p.collect(ctx)
 	msg := exchange.Message{

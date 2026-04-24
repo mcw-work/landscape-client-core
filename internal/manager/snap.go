@@ -79,95 +79,164 @@ func reportResult(ctx context.Context, result exchange.ResultSink, opID int64, e
 	}
 }
 
-// InstallSnapHandler handles "install-snap" commands.
-type InstallSnapHandler struct {
-	Snapd snapd.Client
+// getSnaps extracts the "snaps" list from a message.
+// The server sends snaps as [{"name": "snapname", "args": {...}}, ...].
+func getSnaps(msg exchange.Message) ([]map[string]any, error) {
+	v, ok := msg["snaps"]
+	if !ok {
+		return nil, fmt.Errorf("manager: missing required field \"snaps\"")
+	}
+	list, ok := v.([]any)
+	if !ok {
+		return nil, fmt.Errorf("manager: field \"snaps\": expected list, got %T", v)
+	}
+	result := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("manager: snap entry: expected dict, got %T", item)
+		}
+		result = append(result, m)
+	}
+	return result, nil
 }
 
-func (h *InstallSnapHandler) MessageType() string { return "install-snap" }
+// InstallSnapHandler handles "install-snaps" commands.
+type InstallSnapHandler struct {
+	Snapd      snapd.Client
+	OnComplete func() // called after all snaps have been processed; may be nil
+}
+
+func (h *InstallSnapHandler) MessageType() string { return "install-snaps" }
 
 func (h *InstallSnapHandler) Handle(ctx context.Context, msg exchange.Message, result exchange.ResultSink) error {
-	name, err := getString(msg, "snap-name")
-	if err != nil {
-		return err
-	}
 	opID, err := getInt64(msg, "operation-id")
 	if err != nil {
 		return err
 	}
-	channel, _ := getString(msg, "channel")
-	classic := getBool(msg, "classic")
-
-	changeID, err := h.Snapd.InstallSnap(ctx, name, snapd.InstallOptions{Channel: channel, Classic: classic})
+	snaps, err := getSnaps(msg)
 	if err != nil {
 		reportResult(ctx, result, opID, err)
 		return nil
 	}
-
-	waitCtx, cancel := context.WithTimeout(ctx, changeTimeout)
-	defer cancel()
-
-	reportResult(ctx, result, opID, h.Snapd.WaitForChange(waitCtx, changeID))
+	for _, snap := range snaps {
+		name, _ := snap["name"].(string)
+		if name == "" {
+			reportResult(ctx, result, opID, fmt.Errorf("manager: snap entry missing \"name\" field"))
+			return nil
+		}
+		// Per-snap install options may be nested under an "args" key.
+		var channel string
+		var classic bool
+		if args, ok := snap["args"].(map[string]any); ok {
+			channel, _ = args["channel"].(string)
+			classic, _ = args["classic"].(bool)
+		}
+		changeID, err := h.Snapd.InstallSnap(ctx, name, snapd.InstallOptions{Channel: channel, Classic: classic})
+		if err != nil {
+			reportResult(ctx, result, opID, err)
+			return nil
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, changeTimeout)
+		err = h.Snapd.WaitForChange(waitCtx, changeID)
+		cancel()
+		if err != nil {
+			reportResult(ctx, result, opID, err)
+			return nil
+		}
+	}
+	if h.OnComplete != nil {
+		h.OnComplete()
+	}
+	reportResult(ctx, result, opID, nil)
 	return nil
 }
 
-// RemoveSnapHandler handles "remove-snap" commands.
+// RemoveSnapHandler handles "remove-snaps" commands.
 type RemoveSnapHandler struct {
-	Snapd snapd.Client
+	Snapd      snapd.Client
+	OnComplete func() // called after all snaps have been processed; may be nil
 }
 
-func (h *RemoveSnapHandler) MessageType() string { return "remove-snap" }
+func (h *RemoveSnapHandler) MessageType() string { return "remove-snaps" }
 
 func (h *RemoveSnapHandler) Handle(ctx context.Context, msg exchange.Message, result exchange.ResultSink) error {
-	name, err := getString(msg, "snap-name")
-	if err != nil {
-		return err
-	}
 	opID, err := getInt64(msg, "operation-id")
 	if err != nil {
 		return err
 	}
-
-	changeID, err := h.Snapd.RemoveSnap(ctx, name)
+	snaps, err := getSnaps(msg)
 	if err != nil {
 		reportResult(ctx, result, opID, err)
 		return nil
 	}
-
-	waitCtx, cancel := context.WithTimeout(ctx, changeTimeout)
-	defer cancel()
-
-	reportResult(ctx, result, opID, h.Snapd.WaitForChange(waitCtx, changeID))
+	for _, snap := range snaps {
+		name, _ := snap["name"].(string)
+		if name == "" {
+			reportResult(ctx, result, opID, fmt.Errorf("manager: snap entry missing \"name\" field"))
+			return nil
+		}
+		changeID, err := h.Snapd.RemoveSnap(ctx, name)
+		if err != nil {
+			reportResult(ctx, result, opID, err)
+			return nil
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, changeTimeout)
+		err = h.Snapd.WaitForChange(waitCtx, changeID)
+		cancel()
+		if err != nil {
+			reportResult(ctx, result, opID, err)
+			return nil
+		}
+	}
+	if h.OnComplete != nil {
+		h.OnComplete()
+	}
+	reportResult(ctx, result, opID, nil)
 	return nil
 }
 
-// RefreshSnapHandler handles "refresh-snap" commands.
+// RefreshSnapHandler handles "refresh-snaps" commands.
 type RefreshSnapHandler struct {
-	Snapd snapd.Client
+	Snapd      snapd.Client
+	OnComplete func() // called after all snaps have been processed; may be nil
 }
 
-func (h *RefreshSnapHandler) MessageType() string { return "refresh-snap" }
+func (h *RefreshSnapHandler) MessageType() string { return "refresh-snaps" }
 
 func (h *RefreshSnapHandler) Handle(ctx context.Context, msg exchange.Message, result exchange.ResultSink) error {
-	name, err := getString(msg, "snap-name")
-	if err != nil {
-		return err
-	}
 	opID, err := getInt64(msg, "operation-id")
 	if err != nil {
 		return err
 	}
-
-	changeID, err := h.Snapd.RefreshSnap(ctx, name)
+	snaps, err := getSnaps(msg)
 	if err != nil {
 		reportResult(ctx, result, opID, err)
 		return nil
 	}
-
-	waitCtx, cancel := context.WithTimeout(ctx, changeTimeout)
-	defer cancel()
-
-	reportResult(ctx, result, opID, h.Snapd.WaitForChange(waitCtx, changeID))
+	for _, snap := range snaps {
+		name, _ := snap["name"].(string)
+		if name == "" {
+			reportResult(ctx, result, opID, fmt.Errorf("manager: snap entry missing \"name\" field"))
+			return nil
+		}
+		changeID, err := h.Snapd.RefreshSnap(ctx, name)
+		if err != nil {
+			reportResult(ctx, result, opID, err)
+			return nil
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, changeTimeout)
+		err = h.Snapd.WaitForChange(waitCtx, changeID)
+		cancel()
+		if err != nil {
+			reportResult(ctx, result, opID, err)
+			return nil
+		}
+	}
+	if h.OnComplete != nil {
+		h.OnComplete()
+	}
+	reportResult(ctx, result, opID, nil)
 	return nil
 }
 

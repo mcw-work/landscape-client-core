@@ -51,8 +51,8 @@ func (m *mockResultSink) lastCall() (resultCall, bool) {
 
 func TestInstallSnapHandler_MessageType(t *testing.T) {
 	h := &manager.InstallSnapHandler{Snapd: &snapd.MockClient{}}
-	if got := h.MessageType(); got != "install-snap" {
-		t.Errorf("MessageType() = %q, want %q", got, "install-snap")
+	if got := h.MessageType(); got != "install-snaps" {
+		t.Errorf("MessageType() = %q, want %q", got, "install-snaps")
 	}
 }
 
@@ -61,10 +61,8 @@ func TestInstallSnapHandler_Success(t *testing.T) {
 	sink := &mockResultSink{}
 	h := &manager.InstallSnapHandler{Snapd: mc}
 	msg := exchange.Message{
-		"snap-name":    "mysnap",
+		"snaps":        []any{map[string]any{"name": "mysnap", "args": map[string]any{"channel": "stable"}}},
 		"operation-id": int64(1),
-		"channel":      "stable",
-		"classic":      false,
 	}
 
 	if err := h.Handle(context.Background(), msg, sink); err != nil {
@@ -85,12 +83,46 @@ func TestInstallSnapHandler_Success(t *testing.T) {
 	}
 }
 
+func TestInstallSnapHandler_OnComplete(t *testing.T) {
+	mc := &snapd.MockClient{ChangeID: "42"}
+	sink := &mockResultSink{}
+	var called int
+	h := &manager.InstallSnapHandler{Snapd: mc, OnComplete: func() { called++ }}
+	msg := exchange.Message{
+		"snaps":        []any{map[string]any{"name": "mysnap"}},
+		"operation-id": int64(1),
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called != 1 {
+		t.Errorf("OnComplete called %d times, want 1", called)
+	}
+}
+
+func TestInstallSnapHandler_OnComplete_NotCalledOnError(t *testing.T) {
+	mc := &snapd.MockClient{Err: fmt.Errorf("install failed")}
+	sink := &mockResultSink{}
+	var called int
+	h := &manager.InstallSnapHandler{Snapd: mc, OnComplete: func() { called++ }}
+	msg := exchange.Message{
+		"snaps":        []any{map[string]any{"name": "mysnap"}},
+		"operation-id": int64(1),
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called != 0 {
+		t.Errorf("OnComplete called %d times on error, want 0", called)
+	}
+}
+
 func TestInstallSnapHandler_SnapdError(t *testing.T) {
 	mc := &snapd.MockClient{Err: fmt.Errorf("install failed")}
 	sink := &mockResultSink{}
 	h := &manager.InstallSnapHandler{Snapd: mc}
 	msg := exchange.Message{
-		"snap-name":    "mysnap",
+		"snaps":        []any{map[string]any{"name": "mysnap"}},
 		"operation-id": int64(1),
 	}
 
@@ -114,7 +146,7 @@ func TestInstallSnapHandler_WaitForChangeTimeout(t *testing.T) {
 	sink := &mockResultSink{}
 	h := &manager.InstallSnapHandler{Snapd: mc}
 	msg := exchange.Message{
-		"snap-name":    "mysnap",
+		"snaps":        []any{map[string]any{"name": "mysnap"}},
 		"operation-id": int64(1),
 	}
 
@@ -134,8 +166,8 @@ func TestInstallSnapHandler_WaitForChangeTimeout(t *testing.T) {
 
 func TestRemoveSnapHandler_MessageType(t *testing.T) {
 	h := &manager.RemoveSnapHandler{Snapd: &snapd.MockClient{}}
-	if got := h.MessageType(); got != "remove-snap" {
-		t.Errorf("MessageType() = %q, want %q", got, "remove-snap")
+	if got := h.MessageType(); got != "remove-snaps" {
+		t.Errorf("MessageType() = %q, want %q", got, "remove-snaps")
 	}
 }
 
@@ -144,7 +176,7 @@ func TestRemoveSnapHandler_Success(t *testing.T) {
 	sink := &mockResultSink{}
 	h := &manager.RemoveSnapHandler{Snapd: mc}
 	msg := exchange.Message{
-		"snap-name":    "removeme",
+		"snaps":        []any{map[string]any{"name": "removeme"}},
 		"operation-id": int64(2),
 	}
 
@@ -166,12 +198,46 @@ func TestRemoveSnapHandler_Success(t *testing.T) {
 	}
 }
 
+func TestRemoveSnapHandler_OnComplete(t *testing.T) {
+	mc := &snapd.MockClient{ChangeID: "99"}
+	sink := &mockResultSink{}
+	var called int
+	h := &manager.RemoveSnapHandler{Snapd: mc, OnComplete: func() { called++ }}
+	msg := exchange.Message{
+		"snaps":        []any{map[string]any{"name": "removeme"}},
+		"operation-id": int64(2),
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called != 1 {
+		t.Errorf("OnComplete called %d times, want 1", called)
+	}
+}
+
+func TestRemoveSnapHandler_OnComplete_NotCalledOnError(t *testing.T) {
+	mc := &snapd.MockClient{Err: fmt.Errorf("remove failed")}
+	sink := &mockResultSink{}
+	var called int
+	h := &manager.RemoveSnapHandler{Snapd: mc, OnComplete: func() { called++ }}
+	msg := exchange.Message{
+		"snaps":        []any{map[string]any{"name": "removeme"}},
+		"operation-id": int64(2),
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called != 0 {
+		t.Errorf("OnComplete called %d times on error, want 0", called)
+	}
+}
+
 func TestRemoveSnapHandler_SnapdError(t *testing.T) {
 	mc := &snapd.MockClient{Err: fmt.Errorf("remove failed")}
 	sink := &mockResultSink{}
 	h := &manager.RemoveSnapHandler{Snapd: mc}
 	msg := exchange.Message{
-		"snap-name":    "removeme",
+		"snaps":        []any{map[string]any{"name": "removeme"}},
 		"operation-id": int64(2),
 	}
 
@@ -195,7 +261,7 @@ func TestRemoveSnapHandler_WaitForChangeTimeout(t *testing.T) {
 	sink := &mockResultSink{}
 	h := &manager.RemoveSnapHandler{Snapd: mc}
 	msg := exchange.Message{
-		"snap-name":    "removeme",
+		"snaps":        []any{map[string]any{"name": "removeme"}},
 		"operation-id": int64(2),
 	}
 
@@ -215,8 +281,8 @@ func TestRemoveSnapHandler_WaitForChangeTimeout(t *testing.T) {
 
 func TestRefreshSnapHandler_MessageType(t *testing.T) {
 	h := &manager.RefreshSnapHandler{Snapd: &snapd.MockClient{}}
-	if got := h.MessageType(); got != "refresh-snap" {
-		t.Errorf("MessageType() = %q, want %q", got, "refresh-snap")
+	if got := h.MessageType(); got != "refresh-snaps" {
+		t.Errorf("MessageType() = %q, want %q", got, "refresh-snaps")
 	}
 }
 
@@ -225,7 +291,7 @@ func TestRefreshSnapHandler_Success(t *testing.T) {
 	sink := &mockResultSink{}
 	h := &manager.RefreshSnapHandler{Snapd: mc}
 	msg := exchange.Message{
-		"snap-name":    "refreshme",
+		"snaps":        []any{map[string]any{"name": "refreshme"}},
 		"operation-id": int64(3),
 	}
 
@@ -247,12 +313,46 @@ func TestRefreshSnapHandler_Success(t *testing.T) {
 	}
 }
 
+func TestRefreshSnapHandler_OnComplete(t *testing.T) {
+	mc := &snapd.MockClient{ChangeID: "77"}
+	sink := &mockResultSink{}
+	var called int
+	h := &manager.RefreshSnapHandler{Snapd: mc, OnComplete: func() { called++ }}
+	msg := exchange.Message{
+		"snaps":        []any{map[string]any{"name": "refreshme"}},
+		"operation-id": int64(3),
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called != 1 {
+		t.Errorf("OnComplete called %d times, want 1", called)
+	}
+}
+
+func TestRefreshSnapHandler_OnComplete_NotCalledOnError(t *testing.T) {
+	mc := &snapd.MockClient{Err: fmt.Errorf("refresh failed")}
+	sink := &mockResultSink{}
+	var called int
+	h := &manager.RefreshSnapHandler{Snapd: mc, OnComplete: func() { called++ }}
+	msg := exchange.Message{
+		"snaps":        []any{map[string]any{"name": "refreshme"}},
+		"operation-id": int64(3),
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called != 0 {
+		t.Errorf("OnComplete called %d times on error, want 0", called)
+	}
+}
+
 func TestRefreshSnapHandler_SnapdError(t *testing.T) {
 	mc := &snapd.MockClient{Err: fmt.Errorf("refresh failed")}
 	sink := &mockResultSink{}
 	h := &manager.RefreshSnapHandler{Snapd: mc}
 	msg := exchange.Message{
-		"snap-name":    "refreshme",
+		"snaps":        []any{map[string]any{"name": "refreshme"}},
 		"operation-id": int64(3),
 	}
 
@@ -276,7 +376,7 @@ func TestRefreshSnapHandler_WaitForChangeTimeout(t *testing.T) {
 	sink := &mockResultSink{}
 	h := &manager.RefreshSnapHandler{Snapd: mc}
 	msg := exchange.Message{
-		"snap-name":    "refreshme",
+		"snaps":        []any{map[string]any{"name": "refreshme"}},
 		"operation-id": int64(3),
 	}
 

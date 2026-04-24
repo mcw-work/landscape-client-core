@@ -56,8 +56,12 @@ func TestShutdownHandler_Reboot(t *testing.T) {
 	}}
 
 	h := manager.NewShutdownHandler()
-	h.Exec = func(_ context.Context, name string, args ...string) error {
-		events = append(events, "exec:"+name+":"+strings.Join(args, ","))
+	h.Shutdown = func(reboot bool) error {
+		if reboot {
+			events = append(events, "shutdown:reboot")
+		} else {
+			events = append(events, "shutdown:poweroff")
+		}
 		return nil
 	}
 
@@ -71,7 +75,7 @@ func TestShutdownHandler_Reboot(t *testing.T) {
 
 	want := []string{
 		fmt.Sprintf("result:%d", exchange.StatusSucceeded),
-		"exec:systemctl:reboot",
+		"shutdown:reboot",
 	}
 	if len(events) != len(want) {
 		t.Fatalf("events = %v, want %v", events, want)
@@ -85,13 +89,11 @@ func TestShutdownHandler_Reboot(t *testing.T) {
 
 func TestShutdownHandler_Poweroff(t *testing.T) {
 	sink := &mockResultSink{}
-	var gotName string
-	var gotArgs []string
+	var gotReboot *bool
 
 	h := manager.NewShutdownHandler()
-	h.Exec = func(_ context.Context, name string, args ...string) error {
-		gotName = name
-		gotArgs = args
+	h.Shutdown = func(reboot bool) error {
+		gotReboot = &reboot
 		return nil
 	}
 
@@ -110,8 +112,8 @@ func TestShutdownHandler_Poweroff(t *testing.T) {
 	if call.status != exchange.StatusSucceeded {
 		t.Errorf("status = %d, want StatusSucceeded (%d)", call.status, exchange.StatusSucceeded)
 	}
-	if gotName != "systemctl" || len(gotArgs) != 1 || gotArgs[0] != "poweroff" {
-		t.Errorf("exec called with %q %v, want %q %v", gotName, gotArgs, "systemctl", []string{"poweroff"})
+	if gotReboot == nil || *gotReboot != false {
+		t.Errorf("Shutdown called with reboot=%v, want false", gotReboot)
 	}
 }
 
@@ -119,8 +121,8 @@ func TestShutdownHandler_ExecError(t *testing.T) {
 	sink := &mockResultSink{}
 
 	h := manager.NewShutdownHandler()
-	h.Exec = func(_ context.Context, _ string, _ ...string) error {
-		return fmt.Errorf("systemctl failed")
+	h.Shutdown = func(_ bool) error {
+		return fmt.Errorf("shutdown failed")
 	}
 
 	msg := exchange.Message{

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -118,11 +119,11 @@ func Load(l Loader) (*Config, error) {
 		if v == "" {
 			*df.field = df.defaultValue
 		} else {
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				return nil, fmt.Errorf("invalid duration for %q: %w", df.key, err)
+			secs, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || secs < 0 {
+				return nil, fmt.Errorf("invalid duration for %q: must be a non-negative integer number of seconds", df.key)
 			}
-			*df.field = d
+			*df.field = time.Duration(secs) * time.Second
 		}
 	}
 
