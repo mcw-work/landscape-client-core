@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -196,6 +197,55 @@ func TestPost_ContextCancellation(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Post did not return after context cancellation")
+	}
+}
+
+func TestClient_Get(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q, want GET", r.Method)
+		}
+		if r.Header.Get("X-Custom-Header") != "test-value" {
+			t.Errorf("X-Custom-Header = %q, want %q", r.Header.Get("X-Custom-Header"), "test-value")
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("attachment-bytes"))
+	}))
+	defer srv.Close()
+
+	c, err := transport.New(transport.Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	body, err := c.Get(context.Background(), srv.URL+"/attachment/123", map[string]string{
+		"X-Custom-Header": "test-value",
+	})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if string(body) != "attachment-bytes" {
+		t.Errorf("body = %q, want %q", body, "attachment-bytes")
+	}
+}
+
+func TestClient_Get_HTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c, _ := transport.New(transport.Config{})
+	_, err := c.Get(context.Background(), srv.URL+"/attachment/999", nil)
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+	var httpErr *transport.HTTPError
+	if !errors.As(err, &httpErr) {
+		t.Errorf("expected *transport.HTTPError, got %T: %v", err, err)
+	}
+	if httpErr.StatusCode != http.StatusNotFound {
+		t.Errorf("StatusCode = %d, want 404", httpErr.StatusCode)
 	}
 }
 

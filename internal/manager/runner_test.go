@@ -59,15 +59,23 @@ type mockResultSink struct {
 }
 
 type resultCall struct {
-	opID   int64
-	status int
-	output string
+	opID       int64
+	status     int
+	resultCode int64 // 0 means not set
+	output     string
 }
 
 func (m *mockResultSink) SendResult(_ context.Context, operationID int64, status int, output string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.results = append(m.results, resultCall{opID: operationID, status: status, output: output})
+	return nil
+}
+
+func (m *mockResultSink) SendResultCode(_ context.Context, operationID int64, status int, resultCode int64, output string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.results = append(m.results, resultCall{opID: operationID, status: status, resultCode: resultCode, output: output})
 	return nil
 }
 

@@ -47,6 +47,29 @@ func getBool(msg exchange.Message, key string) bool {
 	return ok && b
 }
 
+// getAttachments extracts the optional "attachments" field.
+// Returns nil if absent or empty.
+func getAttachments(msg exchange.Message) map[string]int64 {
+	v, ok := msg["attachments"]
+	if !ok {
+		return nil
+	}
+	raw, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	result := make(map[string]int64, len(raw))
+	for name, idAny := range raw {
+		if id, ok := idAny.(int64); ok {
+			result[name] = id
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
 // reportResult sends a succeeded or failed result back to the server.
 func reportResult(ctx context.Context, result exchange.ResultSink, opID int64, err error) {
 	if err != nil {

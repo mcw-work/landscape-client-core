@@ -605,3 +605,68 @@ func TestTransportFailure(t *testing.T) {
 		}
 	}
 }
+
+func TestExchange_SendResultCode(t *testing.T) {
+	srv := &fakeServer{}
+	srv.push(map[string]any{
+		"next-expected-sequence": int64(1),
+		"next-exchange-token":    "tok",
+		"messages":               []any{},
+	})
+
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	tc, _ := transport.New(transport.Config{})
+	store := persist.New(t.TempDir() + "/state.json")
+	cfg := &config.Config{URL: ts.URL, AccountName: "acc"}
+	exc := New(cfg, store, tc)
+
+	// Pre-register so exchange doesn't inject a register message.
+	st, _ := store.Load()
+	st.SecureID = "test-secure-id"
+	_ = store.Save(st)
+
+	ctx := context.Background()
+	if err := exc.SendResultCode(ctx, int64(42), StatusFailed, int64(102), "timed out"); err != nil {
+		t.Fatalf("SendResultCode: %v", err)
+	}
+
+	// Force an exchange so the message gets sent to the fake server.
+	exc.TriggerExchange()
+	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); _ = exc.Run(runCtx) }()
+
+	// Wait for the server to receive the exchange.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if srv.count() > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if srv.count() == 0 {
+		t.Fatal("no exchange received")
+	}
+
+	req := srv.get(0)
+	msgs, _ := req.payload["messages"].([]any)
+	if len(msgs) == 0 {
+		t.Fatal("no messages in exchange payload")
+	}
+	msg, _ := msgs[0].(map[string]any)
+	if got := msg["type"]; got != "operation-result" {
+		t.Errorf("type = %v, want operation-result", got)
+	}
+	if got := msg["result-code"]; got != int64(102) {
+		t.Errorf("result-code = %v, want 102", got)
+	}
+	if got := msg["result-text"]; got != "timed out" {
+		t.Errorf("result-text = %v, want %q", got, "timed out")
+	}
+
+	cancel() // stop the exchange loop
+	<-done   // wait for Run to return
+}

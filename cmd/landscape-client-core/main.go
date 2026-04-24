@@ -119,7 +119,7 @@ func main() {
 		&manager.StopServiceHandler{Snapd: snapdClient},
 		&manager.RestartServiceHandler{Snapd: snapdClient},
 		manager.NewShutdownHandler(),
-		manager.NewScriptExecHandler(snapCommon),
+		manager.NewScriptExecHandler(snapCommon, transport.NewAttachmentFetcher(tc, cfg.URL, store)),
 	}
 	mgRunner := manager.NewRunner(handlers, exc, exc)
 	mgRunner.Register()

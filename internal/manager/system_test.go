@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,6 +22,27 @@ type funcSink struct {
 
 func (s *funcSink) SendResult(_ context.Context, opID int64, status int, output string) error {
 	return s.fn(opID, status, output)
+}
+
+func (s *funcSink) SendResultCode(_ context.Context, opID int64, status int, _ int64, output string) error {
+	return s.fn(opID, status, output)
+}
+
+// fakeAttachmentFetcher returns canned bytes for each attachment ID.
+type fakeAttachmentFetcher struct {
+	data map[int64][]byte
+	err  error
+}
+
+func (f *fakeAttachmentFetcher) FetchAttachment(_ context.Context, id int64) ([]byte, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	b, ok := f.data[id]
+	if !ok {
+		return nil, fmt.Errorf("fakeAttachmentFetcher: unknown id %d", id)
+	}
+	return b, nil
 }
 
 // ---- ShutdownHandler tests ----
@@ -125,7 +147,7 @@ func TestShutdownHandler_ExecError(t *testing.T) {
 
 func TestScriptExecHandler_Success(t *testing.T) {
 	sink := &mockResultSink{}
-	h := manager.NewScriptExecHandler(t.TempDir())
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
 
 	msg := exchange.Message{
 		"operation-id": int64(10),
@@ -149,7 +171,7 @@ func TestScriptExecHandler_Success(t *testing.T) {
 
 func TestScriptExecHandler_Failure(t *testing.T) {
 	sink := &mockResultSink{}
-	h := manager.NewScriptExecHandler(t.TempDir())
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
 
 	msg := exchange.Message{
 		"operation-id": int64(11),
@@ -173,7 +195,7 @@ func TestScriptExecHandler_Failure(t *testing.T) {
 
 func TestScriptExecHandler_TimeLimit(t *testing.T) {
 	sink := &mockResultSink{}
-	h := manager.NewScriptExecHandler(t.TempDir())
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
 
 	msg := exchange.Message{
 		"operation-id": int64(12),
@@ -195,12 +217,12 @@ func TestScriptExecHandler_TimeLimit(t *testing.T) {
 
 func TestScriptExecHandler_OutputTruncated(t *testing.T) {
 	sink := &mockResultSink{}
-	h := manager.NewScriptExecHandler(t.TempDir())
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
 
-	// Produce 2 MiB of output; limit is 1 MiB.
+	// Produce 10 MiB of output; limit is 5 MiB.
 	msg := exchange.Message{
 		"operation-id": int64(13),
-		"code":         "yes x | head -c 2097152",
+		"code":         "yes x | head -c 10485760",
 		"time-limit":   int64(30),
 	}
 	if err := h.Handle(context.Background(), msg, sink); err != nil {
@@ -211,11 +233,20 @@ func TestScriptExecHandler_OutputTruncated(t *testing.T) {
 	if !ok {
 		t.Fatal("no result sent")
 	}
+	const limit = 5 * 1024 * 1024
 	if len(call.output) == 0 {
 		t.Error("output should not be empty")
 	}
-	if len(call.output) > 1<<20 {
-		t.Errorf("output not truncated: len = %d, want <= %d (1 MiB)", len(call.output), 1<<20)
+	// Allow slightly over limit for the truncation marker.
+	if len(call.output) > limit+100 {
+		t.Errorf("output not truncated: len = %d, want <= %d (5 MiB + marker)", len(call.output), limit+100)
+	}
+	tail := call.output
+	if len(tail) > 100 {
+		tail = tail[len(tail)-100:]
+	}
+	if !strings.Contains(call.output, "**OUTPUT TRUNCATED**") {
+		t.Errorf("output missing truncation marker; last 100 bytes: %q", tail)
 	}
 }
 
@@ -225,7 +256,7 @@ func TestScriptExecHandler_UsernameWarning(t *testing.T) {
 	defer log.SetOutput(os.Stderr)
 
 	sink := &mockResultSink{}
-	h := manager.NewScriptExecHandler(t.TempDir())
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
 
 	msg := exchange.Message{
 		"operation-id": int64(14),
@@ -251,7 +282,7 @@ func TestScriptExecHandler_UsernameWarning(t *testing.T) {
 func TestScriptExecHandler_Cleanup(t *testing.T) {
 	snapCommon := t.TempDir()
 	sink := &mockResultSink{}
-	h := manager.NewScriptExecHandler(snapCommon)
+	h := manager.NewScriptExecHandler(snapCommon, nil)
 
 	msg := exchange.Message{
 		"operation-id": int64(15),
@@ -264,5 +295,266 @@ func TestScriptExecHandler_Cleanup(t *testing.T) {
 	scriptDir := filepath.Join(snapCommon, "scripts", "15")
 	if _, err := os.Stat(scriptDir); !os.IsNotExist(err) {
 		t.Errorf("script directory %s should have been removed after execution", scriptDir)
+	}
+}
+
+func TestScriptExecHandler_Interpreter(t *testing.T) {
+	sink := &mockResultSink{}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not found, skipping interpreter test")
+	}
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+
+	msg := exchange.Message{
+		"operation-id": int64(20),
+		"interpreter":  "/usr/bin/python3",
+		"code":         "print('hello from python')",
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if call.status != exchange.StatusSucceeded {
+		t.Errorf("status = %d, want StatusSucceeded; output: %s", call.status, call.output)
+	}
+	if !strings.Contains(call.output, "hello from python") {
+		t.Errorf("output = %q, want to contain %q", call.output, "hello from python")
+	}
+}
+
+func TestScriptExecHandler_DefaultsToSh(t *testing.T) {
+	sink := &mockResultSink{}
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+
+	msg := exchange.Message{
+		"operation-id": int64(21),
+		"code":         "echo shell_default",
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if call.status != exchange.StatusSucceeded {
+		t.Errorf("status = %d, want StatusSucceeded", call.status)
+	}
+	if !strings.Contains(call.output, "shell_default") {
+		t.Errorf("output = %q, want to contain %q", call.output, "shell_default")
+	}
+}
+
+func TestScriptExecHandler_BadInterpreter(t *testing.T) {
+	sink := &mockResultSink{}
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+
+	msg := exchange.Message{
+		"operation-id": int64(22),
+		"interpreter":  "/nonexistent/interpreter",
+		"code":         "echo hi",
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if call.status != exchange.StatusFailed {
+		t.Errorf("status = %d, want StatusFailed", call.status)
+	}
+}
+
+func TestScriptExecHandler_TimeoutResultCode(t *testing.T) {
+	sink := &mockResultSink{}
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+
+	msg := exchange.Message{
+		"operation-id": int64(30),
+		"code":         "sleep 10",
+		"time-limit":   int64(1),
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if call.status != exchange.StatusFailed {
+		t.Errorf("status = %d, want StatusFailed", call.status)
+	}
+	if call.resultCode != 102 {
+		t.Errorf("resultCode = %d, want 102 (timeout)", call.resultCode)
+	}
+}
+
+func TestScriptExecHandler_NonZeroExitResultCode(t *testing.T) {
+	sink := &mockResultSink{}
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+
+	msg := exchange.Message{
+		"operation-id": int64(31),
+		"code":         "exit 1",
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if call.status != exchange.StatusFailed {
+		t.Errorf("status = %d, want StatusFailed", call.status)
+	}
+	if call.resultCode != 103 {
+		t.Errorf("resultCode = %d, want 103 (process failed)", call.resultCode)
+	}
+}
+
+func TestScriptExecHandler_SuccessNoResultCode(t *testing.T) {
+	sink := &mockResultSink{}
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+
+	msg := exchange.Message{
+		"operation-id": int64(32),
+		"code":         "echo ok",
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if call.status != exchange.StatusSucceeded {
+		t.Errorf("status = %d, want StatusSucceeded", call.status)
+	}
+	if call.resultCode != 0 {
+		t.Errorf("resultCode = %d, want 0 (no code on success)", call.resultCode)
+	}
+}
+
+func TestScriptExecHandler_Attachments(t *testing.T) {
+	fetcher := &fakeAttachmentFetcher{
+		data: map[int64][]byte{
+			int64(7): []byte("attachment content"),
+		},
+	}
+	sink := &mockResultSink{}
+	h := manager.NewScriptExecHandler(t.TempDir(), fetcher)
+
+	// The script reads $LANDSCAPE_ATTACHMENTS/myfile.txt and echoes its content.
+	msg := exchange.Message{
+		"operation-id": int64(40),
+		"code":         "cat $LANDSCAPE_ATTACHMENTS/myfile.txt",
+		"attachments":  map[string]any{"myfile.txt": int64(7)},
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if call.status != exchange.StatusSucceeded {
+		t.Errorf("status = %d, want StatusSucceeded; output: %s", call.status, call.output)
+	}
+	if !strings.Contains(call.output, "attachment content") {
+		t.Errorf("output = %q, want to contain %q", call.output, "attachment content")
+	}
+}
+
+func TestScriptExecHandler_AttachmentFetchFailed(t *testing.T) {
+	fetcher := &fakeAttachmentFetcher{
+		err: fmt.Errorf("server returned 403"),
+	}
+	sink := &mockResultSink{}
+	h := manager.NewScriptExecHandler(t.TempDir(), fetcher)
+
+	msg := exchange.Message{
+		"operation-id": int64(41),
+		"code":         "echo hi",
+		"attachments":  map[string]any{"file.sh": int64(1)},
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if call.status != exchange.StatusFailed {
+		t.Errorf("status = %d, want StatusFailed", call.status)
+	}
+	if call.resultCode != 104 {
+		t.Errorf("resultCode = %d, want 104 (attachment fetch failed)", call.resultCode)
+	}
+}
+
+func TestScriptExecHandler_NoFetcherWithAttachments(t *testing.T) {
+	sink := &mockResultSink{}
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+
+	msg := exchange.Message{
+		"operation-id": int64(42),
+		"code":         "echo hi",
+		"attachments":  map[string]any{"file.sh": int64(1)},
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if call.status != exchange.StatusFailed {
+		t.Errorf("status = %d, want StatusFailed", call.status)
+	}
+	if call.resultCode != 104 {
+		t.Errorf("resultCode = %d, want 104", call.resultCode)
+	}
+}
+
+func TestScriptExecHandler_AttachmentPathTraversal(t *testing.T) {
+	fetcher := &fakeAttachmentFetcher{
+		data: map[int64][]byte{
+			int64(1): []byte("malicious"),
+		},
+	}
+	sink := &mockResultSink{}
+	h := manager.NewScriptExecHandler(t.TempDir(), fetcher)
+
+	msg := exchange.Message{
+		"operation-id": int64(43),
+		"code":         "echo hi",
+		"attachments":  map[string]any{"../../etc/cron.d/evil": int64(1)},
+	}
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if call.status != exchange.StatusFailed {
+		t.Errorf("status = %d, want StatusFailed (path traversal should be rejected)", call.status)
+	}
+	if call.resultCode != 104 {
+		t.Errorf("resultCode = %d, want 104", call.resultCode)
 	}
 }

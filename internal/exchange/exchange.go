@@ -36,6 +36,9 @@ type CommandSource interface {
 // ResultSink allows manager handlers to send operation results back to the server.
 type ResultSink interface {
 	SendResult(ctx context.Context, operationID int64, status int, output string) error
+	// SendResultCode is like SendResult but also sets the result-code field in the
+	// operation-result message.
+	SendResultCode(ctx context.Context, operationID int64, status int, resultCode int64, output string) error
 }
 
 // StatusSucceeded and StatusFailed match the Python client's constants.
@@ -182,14 +185,27 @@ func (e *Exchange) Subscribe(msgType string, handler func(ctx context.Context, m
 	e.handlers[msgType] = append(e.handlers[msgType], handler)
 }
 
-// SendResult enqueues an operation-result message.
-func (e *Exchange) SendResult(ctx context.Context, operationID int64, status int, output string) error {
-	return e.Send(ctx, Message{
+func (e *Exchange) sendOperationResult(ctx context.Context, operationID int64, status int, resultCode *int64, output string) error {
+	msg := Message{
 		"type":         "operation-result",
 		"operation-id": operationID,
 		"status":       int64(status),
 		"result-text":  output,
-	})
+	}
+	if resultCode != nil {
+		msg["result-code"] = *resultCode
+	}
+	return e.Send(ctx, msg)
+}
+
+// SendResult enqueues an operation-result message.
+func (e *Exchange) SendResult(ctx context.Context, operationID int64, status int, output string) error {
+	return e.sendOperationResult(ctx, operationID, status, nil, output)
+}
+
+// SendResultCode enqueues an operation-result message with a result-code field.
+func (e *Exchange) SendResultCode(ctx context.Context, operationID int64, status int, resultCode int64, output string) error {
+	return e.sendOperationResult(ctx, operationID, status, &resultCode, output)
 }
 
 // performExchange executes a single exchange with the Landscape server.
