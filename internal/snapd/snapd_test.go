@@ -67,8 +67,8 @@ func errorResponse(code int, msg string) []byte {
 // Test 1: ListSnaps returns correct []SnapInfo.
 func TestListSnaps(t *testing.T) {
 	want := []snapd.SnapInfo{
-		{Name: "core20", Version: "20", Revision: 1234, Channel: "stable", Status: "active", Developer: "canonical"},
-		{Name: "lxd", Version: "5.0", Revision: 5678, Channel: "latest/stable", Status: "active", Developer: "canonical"},
+		{Name: "core20", Version: "20", Revision: "1234", Channel: "stable", Status: "active", Developer: "canonical"},
+		{Name: "lxd", Version: "5.0", Revision: "5678", Channel: "latest/stable", Status: "active", Developer: "canonical"},
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v2/snaps" {

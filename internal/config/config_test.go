@@ -17,17 +17,19 @@ func (m MapLoader) Get(key string) (string, error) {
 }
 
 // validRequired returns a MapLoader with all required fields set.
+// registration-key is optional and not included here.
 func validRequired() MapLoader {
 	return MapLoader{
-		"account-name":     "my-account",
-		"registration-key": "secret",
-		"computer-title":   "my-box",
-		"url":              "https://landscape.example.com",
+		"account-name":   "my-account",
+		"computer-title": "my-box",
+		"url":            "https://landscape.example.com",
 	}
 }
 
 func TestLoad_AllRequired_Valid(t *testing.T) {
-	cfg, err := config.Load(validRequired())
+	m := validRequired()
+	m["registration-key"] = "secret" // optional but provided here
+	cfg, err := config.Load(m)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,10 +64,15 @@ func TestLoad_MissingAllRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	for _, key := range []string{"account-name", "registration-key", "computer-title", "url"} {
+	// registration-key is optional, so only these three must appear.
+	for _, key := range []string{"account-name", "computer-title", "url"} {
 		if !strings.Contains(err.Error(), key) {
 			t.Errorf("error %q does not mention %q", err.Error(), key)
 		}
+	}
+	// registration-key must NOT appear in the missing-required error.
+	if strings.Contains(err.Error(), "registration-key") {
+		t.Errorf("error %q wrongly mentions registration-key as required", err.Error())
 	}
 }
 
@@ -240,5 +247,54 @@ func TestLoad_HTTP_URL_Valid(t *testing.T) {
 	}
 	if cfg.URL != "http://landscape.example.com" {
 		t.Errorf("URL = %q, want %q", cfg.URL, "http://landscape.example.com")
+	}
+}
+
+// TestLoad_RegistrationKey_Optional verifies that omitting registration-key is valid.
+func TestLoad_RegistrationKey_Optional(t *testing.T) {
+	cfg, err := config.Load(validRequired())
+	if err != nil {
+		t.Fatalf("unexpected error when registration-key is absent: %v", err)
+	}
+	if cfg.RegistrationKey != "" {
+		t.Errorf("RegistrationKey = %q, want empty", cfg.RegistrationKey)
+	}
+}
+
+// TestValidateForHook_FreshInstall verifies that no error is returned when no config is set.
+func TestValidateForHook_FreshInstall(t *testing.T) {
+	if err := config.ValidateForHook(MapLoader{}); err != nil {
+		t.Fatalf("expected nil for unconfigured snap, got: %v", err)
+	}
+}
+
+// TestValidateForHook_PartialConfig verifies that partial configuration is tolerated.
+func TestValidateForHook_PartialConfig(t *testing.T) {
+	// Only url set — wizard in progress.
+	if err := config.ValidateForHook(MapLoader{"url": "https://landscape.example.com"}); err != nil {
+		t.Fatalf("expected nil for partial config, got: %v", err)
+	}
+	// Two of three required keys — still in progress.
+	if err := config.ValidateForHook(MapLoader{
+		"url":          "https://landscape.example.com",
+		"account-name": "myaccount",
+	}); err != nil {
+		t.Fatalf("expected nil for partial config (2 keys), got: %v", err)
+	}
+}
+
+// TestValidateForHook_FullyConfigured verifies that a complete valid config returns nil.
+func TestValidateForHook_FullyConfigured(t *testing.T) {
+	if err := config.ValidateForHook(validRequired()); err != nil {
+		t.Fatalf("expected nil for valid full config, got: %v", err)
+	}
+}
+
+// TestValidateForHook_InvalidConfig verifies that a fully-set but invalid config returns an error.
+func TestValidateForHook_InvalidConfig(t *testing.T) {
+	m := validRequired()
+	m["url"] = "not-a-url" // missing scheme
+	if err := config.ValidateForHook(m); err == nil {
+		t.Fatal("expected error for invalid url, got nil")
 	}
 }

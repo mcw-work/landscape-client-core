@@ -2,7 +2,11 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -17,6 +21,12 @@ type Runner struct {
 	sink    exchange.MessageSink
 	store   *persist.Store
 }
+
+var (
+	runnerInitialBackoff   = time.Second
+	runnerMaxBackoff       = 5 * time.Minute
+	runnerHealthyRunWindow = 30 * time.Second
+)
 
 // New returns a Runner that will run the given plugins, sending messages to
 // sink and loading/saving per-plugin state via store.
@@ -46,21 +56,37 @@ func (r *Runner) Run(ctx context.Context) error {
 // runPlugin runs a single plugin in a loop, recovering from panics and applying
 // exponential backoff before each restart. It returns when ctx is cancelled.
 func (r *Runner) runPlugin(ctx context.Context, plugin Plugin) {
-	backoff := time.Second
+	backoff := runnerInitialBackoff
 	for {
+		started := time.Now()
+		var runErr error
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
-					log.Printf("monitor: plugin %s panicked: %v", plugin.Name(), rec)
+					runErr = fmt.Errorf("panic: %v", rec)
+					log.Printf("monitor: plugin %s panicked: %v\n%s", plugin.Name(), rec, debug.Stack())
 				}
 			}()
-			accessor := r.store.Accessor(plugin.Name(), nil)
-			_ = plugin.Run(ctx, r.sink, accessor)
+			state, err := r.store.Load()
+			if err != nil {
+				log.Printf("monitor: plugin %s: loading state: %v; using empty state", plugin.Name(), err)
+				state = &persist.State{PluginState: make(map[string]json.RawMessage)}
+			}
+			accessor := r.store.Accessor(plugin.Name(), state)
+			runErr = plugin.Run(ctx, r.sink, accessor)
 		}()
 
 		// Don't restart if context was cancelled.
 		if ctx.Err() != nil {
 			return
+		}
+
+		if runErr != nil && !errors.Is(runErr, context.Canceled) {
+			log.Printf("monitor: plugin %s failed: %v", plugin.Name(), runErr)
+		}
+
+		if time.Since(started) >= runnerHealthyRunWindow {
+			backoff = runnerInitialBackoff
 		}
 
 		// Exponential backoff before restart.
@@ -71,8 +97,8 @@ func (r *Runner) runPlugin(ctx context.Context, plugin Plugin) {
 		case <-time.After(backoff):
 		}
 		backoff *= 2
-		if backoff > 5*time.Minute {
-			backoff = 5 * time.Minute
+		if backoff > runnerMaxBackoff {
+			backoff = runnerMaxBackoff
 		}
 	}
 }

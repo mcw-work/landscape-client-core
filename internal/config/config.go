@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -19,12 +20,26 @@ type Config struct {
 	ExchangeInterval       time.Duration // default: 15 * time.Minute
 	UrgentExchangeInterval time.Duration // default: 1 * time.Minute
 	PingInterval           time.Duration // default: 30 * time.Second
+	PingURL                string        // default: derived from URL as http://<host>/ping
 	SSLPublicKey           string        // path to CA cert; default: ""
 	HTTPProxy              string
 	HTTPSProxy             string
 	AccessGroup            string
 	Tags                   string
 	LogLevel               string // default: "info"
+}
+
+// GetPingURL returns the ping URL: PingURL if explicitly set, otherwise derived
+// from URL by using http scheme and /ping path. Matches the Python client default.
+func (c *Config) GetPingURL() string {
+	if c.PingURL != "" {
+		return c.PingURL
+	}
+	u, err := url.Parse(c.URL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return (&url.URL{Scheme: "http", Host: u.Host, Path: "/ping"}).String()
 }
 
 // Loader abstracts snapctl (or any key-value store) for testing.
@@ -56,7 +71,6 @@ func Load(l Loader) (*Config, error) {
 	}
 	required := []requiredField{
 		{"account-name", &c.AccountName},
-		{"registration-key", &c.RegistrationKey},
 		{"computer-title", &c.ComputerTitle},
 		{"url", &c.URL},
 	}
@@ -118,6 +132,8 @@ func Load(l Loader) (*Config, error) {
 		field *string
 	}
 	optional := []optionalField{
+		{"registration-key", &c.RegistrationKey},
+		{"ping-url", &c.PingURL},
 		{"ssl-public-key", &c.SSLPublicKey},
 		{"http-proxy", &c.HTTPProxy},
 		{"https-proxy", &c.HTTPSProxy},
@@ -138,4 +154,32 @@ func Load(l Loader) (*Config, error) {
 	}
 
 	return c, nil
+}
+
+// ValidateForHook validates configuration for the snap configure hook.
+// Unlike Load, it tolerates the snap being not yet configured or only partially
+// configured (e.g. while the wizard is setting keys one at a time).
+// It returns nil when:
+//   - no required configuration has been set yet (fresh install),
+//   - configuration is in progress (fewer than all required keys present),
+//   - or all required fields are present and valid.
+//
+// It returns an error only when all required fields are set but the configuration
+// is invalid (e.g. bad URL scheme, bad duration value).
+func ValidateForHook(l Loader) error {
+	requiredKeys := []string{"url", "account-name", "computer-title"}
+	var present int
+	for _, k := range requiredKeys {
+		v, _ := l.Get(k)
+		if v != "" {
+			present++
+		}
+	}
+	if present < len(requiredKeys) {
+		// Not fully configured yet — fresh install or wizard in progress.
+		return nil
+	}
+	// All required keys are present — run full validation.
+	_, err := Load(l)
+	return err
 }

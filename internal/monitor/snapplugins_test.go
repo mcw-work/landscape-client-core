@@ -59,8 +59,8 @@ func (c *seqServicesClient) GetRebootRequired(_ context.Context) (bool, error) {
 func TestSnapPackages_HappyPath(t *testing.T) {
 	client := &snapd.MockClient{
 		Snaps: []snapd.SnapInfo{
-			{Name: "core22", Version: "20240101", Revision: 1234, Channel: "latest/stable", Developer: "canonical"},
-			{Name: "firefox", Version: "125.0", Revision: 4567, Channel: "latest/stable", Developer: "mozilla"},
+			{ID: "EISPgh06mRh1vordZY9OZ34QHdd7OrdR", Name: "core22", Version: "20240101", Revision: "1234", Channel: "latest/stable", Developer: "canonical"},
+			{ID: "3wdHCAVyZEmYsCMFDE9qt92UV8rOf0HJ", Name: "firefox", Version: "125.0", Revision: "4567", Channel: "latest/stable", Developer: "mozilla"},
 		},
 	}
 	p := &SnapPackagesPlugin{interval: 5 * time.Millisecond, snapdClient: client}
@@ -98,8 +98,8 @@ func TestSnapPackages_HappyPath(t *testing.T) {
 	if !ok {
 		t.Fatalf("installed[0]: expected map[string]any, got %T", installed[0])
 	}
-	if snap0["id"] != "core22" {
-		t.Errorf("id: want %q, got %q", "core22", snap0["id"])
+	if snap0["id"] != "EISPgh06mRh1vordZY9OZ34QHdd7OrdR" {
+		t.Errorf("id: want %q, got %q", "EISPgh06mRh1vordZY9OZ34QHdd7OrdR", snap0["id"])
 	}
 	if snap0["name"] != "core22" {
 		t.Errorf("name: want %q, got %q", "core22", snap0["name"])

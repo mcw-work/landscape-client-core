@@ -21,8 +21,8 @@ func (m *mockSnapctlRunner) Get(key string) (string, error) {
 	return m.gets[key], nil
 }
 
-func (m *mockSnapctlRunner) Set(key, value string) error {
-	m.setCalls = append(m.setCalls, key+"="+value)
+func (m *mockSnapctlRunner) Set(pairs ...string) error {
+	m.setCalls = append(m.setCalls, pairs...)
 	return m.setErr
 }
 
@@ -51,7 +51,8 @@ func newWizard(input string, m *mockSnapctlRunner) (*wizard, *strings.Builder, *
 
 // TestWizard_SaaSFlow covers the full happy path for a SaaS installation.
 // Input order: edition, title, account, regkey, regkey-confirm,
-//              http-proxy, https-proxy, access-group, tags, confirm.
+//
+//	http-proxy, https-proxy, access-group, tags, confirm.
 func TestWizard_SaaSFlow(t *testing.T) {
 	m := &mockSnapctlRunner{gets: map[string]string{}}
 	w, _, _ := newWizard("n\nMy Machine\nmyaccount\nmykey\nmykey\n\n\n\n\ny\n", m)
@@ -74,13 +75,13 @@ func TestWizard_SaaSFlow(t *testing.T) {
 	}
 }
 
-// TestWizard_SelfHostedFlow covers the happy path for a self-hosted installation.
-// Answering "y" skips the account-name prompt and auto-sets it to "standalone".
+// TestWizard_SelfHostedFlow covers the happy path for a non-canonical self-hosted
+// installation. The account name defaults to "standalone" but is still prompted.
 // URL is derived as https://<domain>/message-system.
 func TestWizard_SelfHostedFlow(t *testing.T) {
 	m := &mockSnapctlRunner{gets: map[string]string{}}
-	// edition=y, domain, title, regkey, confirm, proxies/group/tags blank, apply
-	w, _, _ := newWizard("y\nlandscape.mycompany.com\nMy Machine\nmykey\nmykey\n\n\n\n\ny\n", m)
+	// edition=y, domain, title, account (accept default "standalone"), regkey, confirm, proxies/group/tags blank, apply
+	w, _, _ := newWizard("y\nlandscape.mycompany.com\nMy Machine\n\nmykey\nmykey\n\n\n\n\ny\n", m)
 
 	if err := w.Run(); err != nil {
 		t.Fatalf("Run() error: %v", err)
@@ -90,6 +91,29 @@ func TestWizard_SelfHostedFlow(t *testing.T) {
 		"url=https://landscape.mycompany.com/message-system",
 		"computer-title=My Machine",
 		"account-name=standalone",
+		"registration-key=mykey",
+	}
+	if !reflect.DeepEqual(m.setCalls, wantSets) {
+		t.Errorf("Set calls:\n  got  %v\n  want %v", m.setCalls, wantSets)
+	}
+}
+
+// TestWizard_SelfHostedCanonicalDomainAsksAccount verifies that a self-hosted
+// server whose domain ends in .canonical.com still prompts for account name
+// (because it may be an internal Landscape installation on canonical.com infra).
+func TestWizard_SelfHostedCanonicalDomainAsksAccount(t *testing.T) {
+	m := &mockSnapctlRunner{gets: map[string]string{}}
+	// edition=y (self-hosted), domain ends in canonical.com → must ask for account name
+	w, _, _ := newWizard("y\nlandscape.canonical.com\nMy Machine\nmyaccount\nmykey\nmykey\n\n\n\n\ny\n", m)
+
+	if err := w.Run(); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	wantSets := []string{
+		"url=https://landscape.canonical.com/message-system",
+		"computer-title=My Machine",
+		"account-name=myaccount",
 		"registration-key=mykey",
 	}
 	if !reflect.DeepEqual(m.setCalls, wantSets) {

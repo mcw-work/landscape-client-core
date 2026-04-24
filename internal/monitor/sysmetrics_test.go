@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/canonical/landscape-client-core/internal/bpickle"
 	"github.com/canonical/landscape-client-core/internal/snapd"
 )
 
@@ -99,17 +100,17 @@ func TestNetworkActivity_HappyPath(t *testing.T) {
 	if got := msg["type"]; got != "network-activity" {
 		t.Errorf("type: want %q, got %q", "network-activity", got)
 	}
-	acts, ok := msg["activities"].(map[string][]any)
+	actsRaw, ok := msg["activities"].(bpickle.BytesDict)
 	if !ok {
-		t.Fatalf("activities: expected map[string][]any, got %T", msg["activities"])
+		t.Fatalf("activities: expected bpickle.BytesDict, got %T", msg["activities"])
 	}
-	eth0, ok := acts["eth0"]
+	eth0, ok := actsRaw["eth0"].([]any)
 	if !ok || len(eth0) == 0 {
-		t.Fatalf("activities: expected eth0 key with entries, got %v", acts)
+		t.Fatalf("activities: expected eth0 key with entries, got %v", actsRaw)
 	}
-	entry, ok := eth0[0].([]any)
+	entry, ok := eth0[0].(bpickle.Tuple)
 	if !ok || len(entry) < 3 {
-		t.Fatalf("eth0[0]: expected []any with ≥3 elements, got %T %v", eth0[0], eth0[0])
+		t.Fatalf("eth0[0]: expected bpickle.Tuple with ≥3 elements, got %T %v", eth0[0], eth0[0])
 	}
 	// eth0 rx delta = 2500-1000 = 1500, tx delta = 1800-500 = 1300
 	rxDelta, ok := entry[1].(int64)
@@ -232,8 +233,8 @@ func TestActiveProcessInfo_HappyPath(t *testing.T) {
 	if got := proc["name"]; got != "bash" {
 		t.Errorf("name: want %q, got %q", "bash", got)
 	}
-	if got := proc["state"]; got != "S" {
-		t.Errorf("state: want %q, got %q", "S", got)
+	if got, _ := proc["state"].([]byte); string(got) != "S" {
+		t.Errorf("state: want %q, got %q", "S", string(got))
 	}
 }
 
@@ -308,9 +309,9 @@ func TestTemperature_HappyPath(t *testing.T) {
 	if !ok || len(temps) == 0 {
 		t.Fatalf("temperatures: expected non-empty []any, got %T %v", msg["temperatures"], msg["temperatures"])
 	}
-	entry, ok := temps[0].([]any)
+	entry, ok := temps[0].(bpickle.Tuple)
 	if !ok || len(entry) < 2 {
-		t.Fatalf("temperatures[0]: expected []any with ≥2 elements, got %T %v", temps[0], temps[0])
+		t.Fatalf("temperatures[0]: expected bpickle.Tuple with ≥2 elements, got %T %v", temps[0], temps[0])
 	}
 	temp, ok := entry[1].(float64)
 	if !ok {

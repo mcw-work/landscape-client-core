@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/canonical/landscape-client-core/internal/bpickle"
 	"github.com/canonical/landscape-client-core/internal/snapd"
 )
 
@@ -523,13 +524,13 @@ func TestNetworkDevice_HappyPath(t *testing.T) {
 		t.Fatalf("devices: expected non-empty []map[string]any, got %T", msg["devices"])
 	}
 	d := devices[0]
-	if d["interface"] != "eth0" {
+	if string(d["interface"].([]byte)) != "eth0" {
 		t.Errorf("interface: want eth0, got %v", d["interface"])
 	}
-	if d["ip_address"] != "192.168.1.10" {
+	if string(d["ip_address"].([]byte)) != "192.168.1.10" {
 		t.Errorf("ip_address: want 192.168.1.10, got %v", d["ip_address"])
 	}
-	if d["mac_address"] != "aa:bb:cc:dd:ee:ff" {
+	if string(d["mac_address"].([]byte)) != "aa:bb:cc:dd:ee:ff" {
 		t.Errorf("mac_address: want aa:bb:cc:dd:ee:ff, got %v", d["mac_address"])
 	}
 
@@ -680,9 +681,9 @@ func TestMountInfo_HappyPath(t *testing.T) {
 	if !ok || len(entries) == 0 {
 		t.Fatalf("mount-info entries: expected non-empty []any, got %T", mi["mount-info"])
 	}
-	tuple, ok := entries[0].([]any)
+	tuple, ok := entries[0].(bpickle.Tuple)
 	if !ok || len(tuple) < 2 {
-		t.Fatalf("mount-info entry: expected []any with 2 elements, got %v", entries[0])
+		t.Fatalf("mount-info entry: expected bpickle.Tuple with 2 elements, got %v", entries[0])
 	}
 	info, ok := tuple[1].(map[string]any)
 	if !ok {
@@ -706,9 +707,9 @@ func TestMountInfo_HappyPath(t *testing.T) {
 	if !ok || len(fsEntries) == 0 {
 		t.Fatalf("free-space entries: expected non-empty, got %T", fs["free-space"])
 	}
-	fsTuple, ok := fsEntries[0].([]any)
+	fsTuple, ok := fsEntries[0].(bpickle.Tuple)
 	if !ok || len(fsTuple) < 3 {
-		t.Fatalf("free-space entry: expected 3 elements, got %v", fsEntries[0])
+		t.Fatalf("free-space entry: expected bpickle.Tuple with 3 elements, got %v", fsEntries[0])
 	}
 	if fsTuple[2] != int64(50) {
 		t.Errorf("free-space value: want 50, got %v", fsTuple[2])

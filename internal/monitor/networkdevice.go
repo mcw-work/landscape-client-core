@@ -142,18 +142,18 @@ func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 		}
 
 		devices = append(devices, map[string]any{
-			"interface":         name,
-			"ip_address":        ipAddr,
-			"mac_address":       mac,
-			"broadcast_address": broadcastAddr,
-			"netmask":           netmask,
+			"interface":         []byte(name),
+			"ip_address":        []byte(ipAddr),
+			"mac_address":       []byte(mac),
+			"broadcast_address": []byte(broadcastAddr),
+			"netmask":           []byte(netmask),
 			"flags":             flags,
 		})
 
 		speed := p.readSpeed(name)
 		duplex := p.readDuplex(name)
 		speeds = append(speeds, map[string]any{
-			"interface": name,
+			"interface": []byte(name),
 			"speed":     speed,
 			"duplex":    duplex,
 		})

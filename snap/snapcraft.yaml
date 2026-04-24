@@ -27,6 +27,7 @@ apps:
       - hardware-observe
       - shutdown
       - log-observe
+      - mount-observe
 
   config:
     command: bin/landscape-client-core-config
@@ -44,5 +45,7 @@ parts:
     source: .
     build-snaps:
       - go/1.22/stable
+    stage-packages:
+      - lshw
     override-build: |
       craftctl default

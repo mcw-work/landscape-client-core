@@ -17,7 +17,11 @@ import (
 // SnapctlRunner abstracts snapctl calls for testability.
 type SnapctlRunner interface {
 	Get(key string) (string, error)
-	Set(key, value string) error
+	// Set writes one or more "key=value" pairs in a single snapctl set call.
+	// Passing all pairs at once is important: snapctl triggers the configure
+	// hook after each call, so batching avoids N hook invocations and ensures
+	// the hook sees the complete, valid configuration on the first run.
+	Set(pairs ...string) error
 	Restart(service string) error
 }
 
@@ -27,20 +31,36 @@ type RealSnapctlRunner struct{}
 func (r *RealSnapctlRunner) Get(key string) (string, error) {
 	out, err := exec.Command("snapctl", "get", key).Output()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return "", fmt.Errorf("snapctl get %s: %w: %s", key, err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
 		return "", fmt.Errorf("snapctl get %s: %w", key, err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
-func (r *RealSnapctlRunner) Set(key, value string) error {
-	if err := exec.Command("snapctl", "set", key+"="+value).Run(); err != nil {
-		return fmt.Errorf("snapctl set %s: %w", key, err)
+func (r *RealSnapctlRunner) Set(pairs ...string) error {
+	if len(pairs) == 0 {
+		return nil
+	}
+	args := append([]string{"set"}, pairs...)
+	cmd := exec.Command("snapctl", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		if len(out) > 0 {
+			return fmt.Errorf("snapctl set: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return fmt.Errorf("snapctl set: %w", err)
 	}
 	return nil
 }
 
 func (r *RealSnapctlRunner) Restart(service string) error {
-	if err := exec.Command("snapctl", "restart", service).Run(); err != nil {
+	cmd := exec.Command("snapctl", "restart", service)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		if len(out) > 0 {
+			return fmt.Errorf("snapctl restart %s: %w: %s", service, err, strings.TrimSpace(string(out)))
+		}
 		return fmt.Errorf("snapctl restart %s: %w", service, err)
 	}
 	return nil
@@ -174,26 +194,34 @@ func (w *wizard) Run() error {
 	}
 	w.state.computerTitle = title
 
-	// Step 3: Account Name (skipped for self-hosted; auto-set to "standalone")
-	if w.state.selfHosted {
-		w.state.accountName = "standalone"
+	// Step 3: Account Name.
+	// Always ask when using a canonical.com server (SaaS or self-hosted on
+	// canonical.com infrastructure). For other self-hosted servers, default
+	// to "standalone" but still allow the user to override it.
+	isSaaSDomain := strings.HasSuffix(w.state.domain, ".canonical.com") || w.state.domain == "canonical.com"
+	defaultAccount, _ := w.snapctl.Get("account-name")
+	if w.state.selfHosted && !isSaaSDomain {
+		// Non-canonical self-hosted: default to standalone, still prompt.
+		if defaultAccount == "" {
+			defaultAccount = "standalone"
+		}
 	} else {
+		// SaaS or canonical.com self-hosted: no default — must be provided.
 		fmt.Fprintln(w.io.out, "You must now specify the name of the Landscape account you")
 		fmt.Fprintln(w.io.out, "want to register this computer with. Your account name is shown")
 		fmt.Fprintln(w.io.out, "under 'Account name' at https://landscape.canonical.com .")
 		fmt.Fprintln(w.io.out, "")
-		defaultAccount, _ := w.snapctl.Get("account-name")
-		for {
-			account, err := w.promptLine("Account name", defaultAccount)
-			if err != nil {
-				return err
-			}
-			if account != "" {
-				w.state.accountName = account
-				break
-			}
-			fmt.Fprintln(w.io.out, "Account name is required.")
+	}
+	for {
+		account, err := w.promptLine("Account name", defaultAccount)
+		if err != nil {
+			return err
 		}
+		if account != "" {
+			w.state.accountName = account
+			break
+		}
+		fmt.Fprintln(w.io.out, "Account name is required.")
 	}
 
 	// Step 4: Registration Key (optional; both entries must match)
@@ -299,7 +327,10 @@ func (w *wizard) Run() error {
 		return nil
 	}
 
-	// Step 10: Write via snapctl set; skip blank values
+	// Step 10: Write via a single snapctl set call with all non-empty key=value
+	// pairs. Batching into one call is critical: snapctl triggers the configure
+	// hook once per invocation; calling set per-key would fire the hook in
+	// incomplete intermediate states, causing it to fail validation.
 	settings := []struct{ key, val string }{
 		{"url", w.state.url},
 		{"computer-title", w.state.computerTitle},
@@ -310,13 +341,15 @@ func (w *wizard) Run() error {
 		{"access-group", w.state.accessGroup},
 		{"tags", w.state.tags},
 	}
+	var pairs []string
 	for _, s := range settings {
 		if s.val == "" {
 			continue
 		}
-		if err := w.snapctl.Set(s.key, s.val); err != nil {
-			return err
-		}
+		pairs = append(pairs, s.key+"="+s.val)
+	}
+	if err := w.snapctl.Set(pairs...); err != nil {
+		return err
 	}
 
 	// Restart the daemon; failure is a warning only (config already written)

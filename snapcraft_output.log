@@ -1,0 +1,26 @@
+Running snapcraft without a command will not be possible in future releases. Use 'snapcraft pack' instead.
+Launching managed ubuntu 24.04 instance...
+Starting instance
+Running snapcraft without a command will not be possible in future releases. Use 'snapcraft pack' instead.
+Initializing lifecycle
+Installing build-packages
+Installing build-snaps
+Updating sources for landscape-client-core (source changed)
+Updating build for landscape-client-core ('PULL' step changed)
+:: + craftctl default
+:: + go mod download all
+:: + go install -p 16 ./...
+Restaging landscape-client-core ('BUILD' step changed)
+Priming landscape-client-core
+Determining the version from the project repo (version: git).
+Version has been set to '0+git.0674391-dirty'
+Packing...
+Reading snap metadata...
+Running linters...
+Running linter: classic
+Running linter: library
+Running linter: metadata
+Determining the version from the project repo (version: git).
+Version has been set to '0+git.0674391-dirty'
+Creating snap package...
+Packed landscape-client-core_0+git.0674391-dirty_amd64.snap

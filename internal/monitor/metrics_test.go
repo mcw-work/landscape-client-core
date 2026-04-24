@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/canonical/landscape-client-core/internal/bpickle"
 	"github.com/canonical/landscape-client-core/internal/exchange"
 	"github.com/canonical/landscape-client-core/internal/persist"
 )
@@ -97,9 +98,9 @@ func TestCPUUsage_HappyPath(t *testing.T) {
 	if !ok || len(points) == 0 {
 		t.Fatalf("cpu-usages: expected non-empty []any, got %T %v", msg["cpu-usages"], msg["cpu-usages"])
 	}
-	point, ok := points[0].([]any)
+	point, ok := points[0].(bpickle.Tuple)
 	if !ok || len(point) < 2 {
-		t.Fatalf("cpu-usages[0]: expected []any with ≥2 elements, got %T %v", points[0], points[0])
+		t.Fatalf("cpu-usages[0]: expected bpickle.Tuple with ≥2 elements, got %T %v", points[0], points[0])
 	}
 	usage, ok := point[1].(float64)
 	if !ok {
@@ -185,9 +186,9 @@ func TestMemoryInfo_HappyPath(t *testing.T) {
 	if !ok || len(points) == 0 {
 		t.Fatalf("memory-info: expected non-empty []any, got %T %v", msg["memory-info"], msg["memory-info"])
 	}
-	point, ok := points[0].([]any)
+	point, ok := points[0].(bpickle.Tuple)
 	if !ok || len(point) < 3 {
-		t.Fatalf("memory-info[0]: expected []any with ≥3 elements, got %T %v", points[0], points[0])
+		t.Fatalf("memory-info[0]: expected bpickle.Tuple with ≥3 elements, got %T %v", points[0], points[0])
 	}
 	freeMemMB, ok := point[1].(int64)
 	if !ok {
@@ -270,9 +271,9 @@ func TestLoadAverage_HappyPath(t *testing.T) {
 	if !ok || len(points) == 0 {
 		t.Fatalf("load-averages: expected non-empty []any, got %T %v", msg["load-averages"], msg["load-averages"])
 	}
-	point, ok := points[0].([]any)
+	point, ok := points[0].(bpickle.Tuple)
 	if !ok || len(point) < 2 {
-		t.Fatalf("load-averages[0]: expected []any with ≥2 elements, got %T %v", points[0], points[0])
+		t.Fatalf("load-averages[0]: expected bpickle.Tuple with ≥2 elements, got %T %v", points[0], points[0])
 	}
 	load, ok := point[1].(float64)
 	if !ok {

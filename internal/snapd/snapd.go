@@ -16,12 +16,15 @@ import (
 
 // SnapInfo describes an installed snap.
 type SnapInfo struct {
-	Name      string `json:"name"`
-	Version   string `json:"version"`
-	Revision  int    `json:"revision"`
-	Channel   string `json:"channel"`
-	Status    string `json:"status"`
-	Developer string `json:"developer"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Revision    string `json:"revision"`
+	Channel     string `json:"channel"`
+	Status      string `json:"status"`
+	Developer   string `json:"developer"`
+	Confinement string `json:"confinement"`
+	Summary     string `json:"summary"`
 }
 
 // ServiceInfo describes a snap service.

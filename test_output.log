@@ -1,0 +1,327 @@
+=== RUN   TestCPUUsage_HappyPath
+--- PASS: TestCPUUsage_HappyPath (0.03s)
+=== RUN   TestCPUUsage_MissingFile
+2026/04/22 13:36:06 cpu-usage: priming baseline: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 cpu-usage: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 cpu-usage: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 cpu-usage: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 cpu-usage: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 cpu-usage: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 cpu-usage: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 cpu-usage: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 cpu-usage: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 cpu-usage: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 cpu-usage: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 cpu-usage: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 cpu-usage: opening /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: open /tmp/TestCPUUsage_MissingFile4219924342/001/nonexistent: no such file or directory
+--- PASS: TestCPUUsage_MissingFile (0.06s)
+=== RUN   TestCPUUsage_ContextCancel
+--- PASS: TestCPUUsage_ContextCancel (0.00s)
+=== RUN   TestMemoryInfo_HappyPath
+--- PASS: TestMemoryInfo_HappyPath (0.01s)
+=== RUN   TestMemoryInfo_MissingFile
+2026/04/22 13:36:06 memory-info: opening /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: open /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 memory-info: opening /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: open /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 memory-info: opening /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: open /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 memory-info: opening /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: open /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 memory-info: opening /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: open /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 memory-info: opening /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: open /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 memory-info: opening /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: open /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 memory-info: opening /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: open /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 memory-info: opening /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: open /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 memory-info: opening /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: open /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 memory-info: opening /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: open /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: no such file or directory
+2026/04/22 13:36:06 memory-info: opening /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: open /tmp/TestMemoryInfo_MissingFile2974928542/001/nonexistent: no such file or directory
+--- PASS: TestMemoryInfo_MissingFile (0.06s)
+=== RUN   TestMemoryInfo_ContextCancel
+--- PASS: TestMemoryInfo_ContextCancel (0.00s)
+=== RUN   TestLoadAverage_HappyPath
+--- PASS: TestLoadAverage_HappyPath (0.01s)
+=== RUN   TestLoadAverage_MissingFile
+2026/04/22 13:36:07 load-average: reading /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: open /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: no such file or directory
+2026/04/22 13:36:07 load-average: reading /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: open /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: no such file or directory
+2026/04/22 13:36:07 load-average: reading /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: open /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: no such file or directory
+2026/04/22 13:36:07 load-average: reading /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: open /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: no such file or directory
+2026/04/22 13:36:07 load-average: reading /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: open /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: no such file or directory
+2026/04/22 13:36:07 load-average: reading /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: open /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: no such file or directory
+2026/04/22 13:36:07 load-average: reading /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: open /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: no such file or directory
+2026/04/22 13:36:07 load-average: reading /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: open /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: no such file or directory
+2026/04/22 13:36:07 load-average: reading /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: open /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: no such file or directory
+2026/04/22 13:36:07 load-average: reading /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: open /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: no such file or directory
+2026/04/22 13:36:07 load-average: reading /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: open /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: no such file or directory
+2026/04/22 13:36:07 load-average: reading /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: open /tmp/TestLoadAverage_MissingFile1538004598/001/nonexistent: no such file or directory
+--- PASS: TestLoadAverage_MissingFile (0.06s)
+=== RUN   TestLoadAverage_ContextCancel
+--- PASS: TestLoadAverage_ContextCancel (0.00s)
+=== RUN   TestRunner_AllPluginsStarted
+--- PASS: TestRunner_AllPluginsStarted (0.00s)
+=== RUN   TestRunner_PanicingPluginRestarts
+2026/04/22 13:36:07 monitor: plugin panicker panicked: intentional panic
+2026/04/22 13:36:07 monitor: plugin panicker restarting in 1s
+--- PASS: TestRunner_PanicingPluginRestarts (1.00s)
+=== RUN   TestRunner_ContextCancelStopsAll
+--- PASS: TestRunner_ContextCancelStopsAll (0.05s)
+=== RUN   TestRunner_NoRestartAfterCancel
+2026/04/22 13:36:08 monitor: plugin panic-and-cancelled panicked: panic while cancelled
+--- PASS: TestRunner_NoRestartAfterCancel (0.00s)
+=== RUN   TestSnapPackages_HappyPath
+--- PASS: TestSnapPackages_HappyPath (0.01s)
+=== RUN   TestSnapPackages_EmptyList
+--- PASS: TestSnapPackages_EmptyList (0.01s)
+=== RUN   TestSnapPackages_SnapdError
+2026/04/22 13:36:08 snaps: listing snaps: snapd unavailable
+2026/04/22 13:36:08 snaps: listing snaps: snapd unavailable
+2026/04/22 13:36:08 snaps: listing snaps: snapd unavailable
+2026/04/22 13:36:08 snaps: listing snaps: snapd unavailable
+2026/04/22 13:36:08 snaps: listing snaps: snapd unavailable
+2026/04/22 13:36:08 snaps: listing snaps: snapd unavailable
+--- PASS: TestSnapPackages_SnapdError (0.03s)
+=== RUN   TestSnapPackages_ContextCancel
+--- PASS: TestSnapPackages_ContextCancel (0.00s)
+=== RUN   TestSnapServices_HappyPath
+--- PASS: TestSnapServices_HappyPath (0.01s)
+=== RUN   TestSnapServices_DataWatcher_NoChangeNoSecondMessage
+--- PASS: TestSnapServices_DataWatcher_NoChangeNoSecondMessage (0.06s)
+=== RUN   TestSnapServices_DataWatcher_ChangeTriggersSecondMessage
+--- PASS: TestSnapServices_DataWatcher_ChangeTriggersSecondMessage (0.02s)
+=== RUN   TestSnapServices_SnapdError
+2026/04/22 13:36:08 snap-services: listing services: snapd unavailable
+2026/04/22 13:36:08 snap-services: listing services: snapd unavailable
+2026/04/22 13:36:08 snap-services: listing services: snapd unavailable
+2026/04/22 13:36:08 snap-services: listing services: snapd unavailable
+2026/04/22 13:36:08 snap-services: listing services: snapd unavailable
+2026/04/22 13:36:08 snap-services: listing services: snapd unavailable
+--- PASS: TestSnapServices_SnapdError (0.03s)
+=== RUN   TestSnapServices_ContextCancel
+--- PASS: TestSnapServices_ContextCancel (0.00s)
+=== RUN   TestComputerInfo_HappyPath
+--- PASS: TestComputerInfo_HappyPath (0.01s)
+=== RUN   TestComputerInfo_MissingFiles
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-meminfo: no such file or directory
+2026/04/22 13:36:08 computer-info: reading machine-id: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-machineid: no such file or directory
+2026/04/22 13:36:08 computer-info: opening /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: open /tmp/TestComputerInfo_MissingFiles634171429/001/noexist-osrelease: no such file or directory
+--- PASS: TestComputerInfo_MissingFiles (0.08s)
+=== RUN   TestComputerInfo_ContextCancel
+--- PASS: TestComputerInfo_ContextCancel (0.00s)
+=== RUN   TestComputerInfo_DataWatcher
+--- PASS: TestComputerInfo_DataWatcher (0.06s)
+=== RUN   TestComputerInfo_DataWatcherChange
+--- PASS: TestComputerInfo_DataWatcherChange (0.02s)
+=== RUN   TestProcessorInfo_HappyPath
+--- PASS: TestProcessorInfo_HappyPath (0.01s)
+=== RUN   TestProcessorInfo_MissingFile
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 processor-info: opening /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: open /tmp/TestProcessorInfo_MissingFile2172197750/001/nonexistent: no such file or directory
+--- PASS: TestProcessorInfo_MissingFile (0.08s)
+=== RUN   TestProcessorInfo_ContextCancel
+--- PASS: TestProcessorInfo_ContextCancel (0.00s)
+=== RUN   TestProcessorInfo_DataWatcher
+--- PASS: TestProcessorInfo_DataWatcher (0.06s)
+=== RUN   TestProcessorInfo_DataWatcherChange
+--- PASS: TestProcessorInfo_DataWatcherChange (0.01s)
+=== RUN   TestNetworkDevice_HappyPath
+--- PASS: TestNetworkDevice_HappyPath (0.01s)
+=== RUN   TestNetworkDevice_ContextCancel
+--- PASS: TestNetworkDevice_ContextCancel (0.00s)
+=== RUN   TestNetworkDevice_DataWatcher
+--- PASS: TestNetworkDevice_DataWatcher (0.06s)
+=== RUN   TestNetworkDevice_DataWatcherChange
+--- PASS: TestNetworkDevice_DataWatcherChange (0.02s)
+=== RUN   TestMountInfo_HappyPath
+--- PASS: TestMountInfo_HappyPath (0.01s)
+=== RUN   TestMountInfo_MissingFile
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+2026/04/22 13:36:08 mount-info: opening /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: open /tmp/TestMountInfo_MissingFile3451279925/001/nonexistent: no such file or directory
+--- PASS: TestMountInfo_MissingFile (0.08s)
+=== RUN   TestMountInfo_ContextCancel
+--- PASS: TestMountInfo_ContextCancel (0.00s)
+=== RUN   TestMountInfo_DataWatcher
+--- PASS: TestMountInfo_DataWatcher (0.07s)
+=== RUN   TestMountInfo_DataWatcherChange
+--- PASS: TestMountInfo_DataWatcherChange (0.02s)
+=== RUN   TestUsers_HappyPath
+--- PASS: TestUsers_HappyPath (0.01s)
+=== RUN   TestUsers_MissingFile
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+2026/04/22 13:36:08 users: parsing passwd: opening /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: open /tmp/TestUsers_MissingFile3752472534/001/nonexistent-passwd: no such file or directory
+2026/04/22 13:36:08 users: parsing group: opening /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: open /tmp/TestUsers_MissingFile3752472534/002/nonexistent-group: no such file or directory
+--- PASS: TestUsers_MissingFile (0.08s)
+=== RUN   TestUsers_ContextCancel
+--- PASS: TestUsers_ContextCancel (0.00s)
+=== RUN   TestUsers_CreateUpdateDelete
+--- PASS: TestUsers_CreateUpdateDelete (0.02s)
+=== RUN   TestNetworkActivity_HappyPath
+--- PASS: TestNetworkActivity_HappyPath (0.03s)
+=== RUN   TestNetworkActivity_MissingFile
+2026/04/22 13:36:09 network-activity: priming baseline: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+2026/04/22 13:36:09 network-activity: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+2026/04/22 13:36:09 network-activity: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+2026/04/22 13:36:09 network-activity: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+2026/04/22 13:36:09 network-activity: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+2026/04/22 13:36:09 network-activity: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+2026/04/22 13:36:09 network-activity: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+2026/04/22 13:36:09 network-activity: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+2026/04/22 13:36:09 network-activity: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+2026/04/22 13:36:09 network-activity: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+2026/04/22 13:36:09 network-activity: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+2026/04/22 13:36:09 network-activity: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+2026/04/22 13:36:09 network-activity: opening /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: open /tmp/TestNetworkActivity_MissingFile1398537322/001/nonexistent: no such file or directory
+--- PASS: TestNetworkActivity_MissingFile (0.06s)
+=== RUN   TestNetworkActivity_ContextCancel
+--- PASS: TestNetworkActivity_ContextCancel (0.00s)
+=== RUN   TestActiveProcessInfo_HappyPath
+--- PASS: TestActiveProcessInfo_HappyPath (0.01s)
+=== RUN   TestActiveProcessInfo_MissingProcRoot
+2026/04/22 13:36:09 active-process-info: reading boot time: opening proc/stat: open /tmp/TestActiveProcessInfo_MissingProcRoot727466787/001/nonexistent/stat: no such file or directory
+2026/04/22 13:36:09 active-process-info: reading boot time: opening proc/stat: open /tmp/TestActiveProcessInfo_MissingProcRoot727466787/001/nonexistent/stat: no such file or directory
+2026/04/22 13:36:09 active-process-info: reading boot time: opening proc/stat: open /tmp/TestActiveProcessInfo_MissingProcRoot727466787/001/nonexistent/stat: no such file or directory
+2026/04/22 13:36:09 active-process-info: reading boot time: opening proc/stat: open /tmp/TestActiveProcessInfo_MissingProcRoot727466787/001/nonexistent/stat: no such file or directory
+2026/04/22 13:36:09 active-process-info: reading boot time: opening proc/stat: open /tmp/TestActiveProcessInfo_MissingProcRoot727466787/001/nonexistent/stat: no such file or directory
+2026/04/22 13:36:09 active-process-info: reading boot time: opening proc/stat: open /tmp/TestActiveProcessInfo_MissingProcRoot727466787/001/nonexistent/stat: no such file or directory
+2026/04/22 13:36:09 active-process-info: reading boot time: opening proc/stat: open /tmp/TestActiveProcessInfo_MissingProcRoot727466787/001/nonexistent/stat: no such file or directory
+2026/04/22 13:36:09 active-process-info: reading boot time: opening proc/stat: open /tmp/TestActiveProcessInfo_MissingProcRoot727466787/001/nonexistent/stat: no such file or directory
+2026/04/22 13:36:09 active-process-info: reading boot time: opening proc/stat: open /tmp/TestActiveProcessInfo_MissingProcRoot727466787/001/nonexistent/stat: no such file or directory
+2026/04/22 13:36:09 active-process-info: reading boot time: opening proc/stat: open /tmp/TestActiveProcessInfo_MissingProcRoot727466787/001/nonexistent/stat: no such file or directory
+2026/04/22 13:36:09 active-process-info: reading boot time: opening proc/stat: open /tmp/TestActiveProcessInfo_MissingProcRoot727466787/001/nonexistent/stat: no such file or directory
+2026/04/22 13:36:09 active-process-info: reading boot time: opening proc/stat: open /tmp/TestActiveProcessInfo_MissingProcRoot727466787/001/nonexistent/stat: no such file or directory
+--- PASS: TestActiveProcessInfo_MissingProcRoot (0.06s)
+=== RUN   TestActiveProcessInfo_ContextCancel
+--- PASS: TestActiveProcessInfo_ContextCancel (0.00s)
+=== RUN   TestTemperature_HappyPath
+--- PASS: TestTemperature_HappyPath (0.01s)
+=== RUN   TestTemperature_NoZones
+--- PASS: TestTemperature_NoZones (0.06s)
+=== RUN   TestTemperature_ContextCancel
+--- PASS: TestTemperature_ContextCancel (0.00s)
+=== RUN   TestRebootRequired_HappyPath
+--- PASS: TestRebootRequired_HappyPath (0.01s)
+=== RUN   TestRebootRequired_SnapdError
+2026/04/22 13:36:09 reboot-required: snapd unavailable
+2026/04/22 13:36:09 reboot-required: snapd unavailable
+2026/04/22 13:36:09 reboot-required: snapd unavailable
+2026/04/22 13:36:09 reboot-required: snapd unavailable
+2026/04/22 13:36:09 reboot-required: snapd unavailable
+2026/04/22 13:36:09 reboot-required: snapd unavailable
+2026/04/22 13:36:09 reboot-required: snapd unavailable
+2026/04/22 13:36:09 reboot-required: snapd unavailable
+2026/04/22 13:36:09 reboot-required: snapd unavailable
+2026/04/22 13:36:09 reboot-required: snapd unavailable
+2026/04/22 13:36:09 reboot-required: snapd unavailable
+2026/04/22 13:36:09 reboot-required: snapd unavailable
+--- PASS: TestRebootRequired_SnapdError (0.06s)
+=== RUN   TestRebootRequired_ContextCancel
+--- PASS: TestRebootRequired_ContextCancel (0.00s)
+=== RUN   TestRebootRequired_SameValueNoRepeat
+--- PASS: TestRebootRequired_SameValueNoRepeat (0.20s)
+=== RUN   TestRebootRequired_PackagesFieldPresent
+--- PASS: TestRebootRequired_PackagesFieldPresent (0.01s)
+=== RUN   TestRebootRequired_ValueChange
+--- PASS: TestRebootRequired_ValueChange (0.01s)
+PASS
+ok  	github.com/canonical/landscape-client-core/internal/monitor	2.676s

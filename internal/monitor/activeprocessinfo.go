@@ -301,7 +301,7 @@ func processToMap(info processInfo) map[string]any {
 	return map[string]any{
 		"pid":         info.pid,
 		"name":        info.name,
-		"state":       info.state,
+		"state":       []byte(info.state),
 		"uid":         info.uid,
 		"gid":         info.gid,
 		"vm-size":     info.vmSize,

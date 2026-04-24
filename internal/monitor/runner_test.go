@@ -1,7 +1,10 @@
 package monitor
 
 import (
+	"bytes"
 	"context"
+	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -213,4 +216,125 @@ func TestRunner_NoRestartAfterCancel(t *testing.T) {
 	if got := atomic.LoadInt32(&callCount); got != 1 {
 		t.Fatalf("expected plugin to run exactly once (no restart), got %d", got)
 	}
+}
+
+func TestRunner_LogsPluginRunError(t *testing.T) {
+	store := newStore(t)
+	sink := &mockSink{}
+	var calls int32
+
+	var logs bytes.Buffer
+	oldWriter := log.Writer()
+	oldFlags := log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+	}()
+
+	plugin := &fakePlugin{
+		name: "erroring",
+		runFunc: func(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
+			if atomic.AddInt32(&calls, 1) == 1 {
+				return context.DeadlineExceeded
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	runner := New([]Plugin{plugin}, sink, store)
+	runDone := make(chan struct{})
+	go func() {
+		runner.Run(ctx) //nolint:errcheck
+		close(runDone)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(logs.String(), "monitor: plugin erroring failed: context deadline exceeded") {
+			cancel()
+			<-runDone
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	<-runDone
+	t.Fatalf("expected plugin error log, got: %s", logs.String())
+}
+
+func TestRunner_BackoffResetsAfterHealthyRunWindow(t *testing.T) {
+	oldInitial := runnerInitialBackoff
+	oldMax := runnerMaxBackoff
+	oldHealthy := runnerHealthyRunWindow
+	runnerInitialBackoff = 10 * time.Millisecond
+	runnerMaxBackoff = 40 * time.Millisecond
+	runnerHealthyRunWindow = 30 * time.Millisecond
+	defer func() {
+		runnerInitialBackoff = oldInitial
+		runnerMaxBackoff = oldMax
+		runnerHealthyRunWindow = oldHealthy
+	}()
+
+	var calls int32
+	restartTimes := make(chan time.Time, 4)
+	var firstFailure, secondFailure time.Time
+
+	plugin := &fakePlugin{
+		name: "flappy",
+		runFunc: func(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
+			n := atomic.AddInt32(&calls, 1)
+			restartTimes <- time.Now()
+			switch n {
+			case 1:
+				firstFailure = time.Now()
+				return context.DeadlineExceeded
+			case 2:
+				time.Sleep(45 * time.Millisecond)
+				secondFailure = time.Now()
+				return context.DeadlineExceeded
+			default:
+				<-ctx.Done()
+				return ctx.Err()
+			}
+		},
+	}
+
+	store := newStore(t)
+	sink := &mockSink{}
+	runner := New([]Plugin{plugin}, sink, store)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	go runner.Run(ctx) //nolint:errcheck
+
+	var starts []time.Time
+	for len(starts) < 3 {
+		select {
+		case ts := <-restartTimes:
+			starts = append(starts, ts)
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for plugin restarts")
+		}
+	}
+
+	firstRestartDelay := starts[1].Sub(firstFailure)
+	secondRestartDelay := starts[2].Sub(secondFailure)
+	if firstRestartDelay < 8*time.Millisecond || firstRestartDelay > 35*time.Millisecond {
+		t.Fatalf("first restart delay = %v, want close to initial backoff", firstRestartDelay)
+	}
+	if secondRestartDelay < 8*time.Millisecond || secondRestartDelay > 35*time.Millisecond {
+		t.Fatalf("second restart delay = %v, want backoff reset close to initial backoff", secondRestartDelay)
+	}
+	if secondRestartDelay >= 35*time.Millisecond {
+		t.Fatalf("expected healthy run to reset backoff, got %v", secondRestartDelay)
+	}
+
+	cancel()
 }

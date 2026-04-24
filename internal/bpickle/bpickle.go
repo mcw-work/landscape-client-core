@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -69,12 +70,37 @@ func marshalValue(v any) ([]byte, error) {
 		return marshalBytes(val)
 	case string:
 		return marshalString(val)
+	case Tuple:
+		return marshalTuple(val)
 	case []any:
 		return marshalList(val)
 	case map[string]any:
 		return marshalDict(val)
+	case BytesDict:
+		return marshalBytesDict(val)
 	default:
-		return nil, fmt.Errorf("bpickle: unsupported type %T", v)
+		// Fallback: use reflection to handle concrete slice/array and
+		// string-keyed map types (e.g. []map[string]any, map[string][]string).
+		rv := reflect.ValueOf(v)
+		switch rv.Kind() {
+		case reflect.Slice, reflect.Array:
+			list := make([]any, rv.Len())
+			for i := range list {
+				list[i] = rv.Index(i).Interface()
+			}
+			return marshalList(list)
+		case reflect.Map:
+			if rv.Type().Key().Kind() != reflect.String {
+				return nil, fmt.Errorf("bpickle: unsupported type %T", v)
+			}
+			dict := make(map[string]any, rv.Len())
+			for _, k := range rv.MapKeys() {
+				dict[k.String()] = rv.MapIndex(k).Interface()
+			}
+			return marshalDict(dict)
+		default:
+			return nil, fmt.Errorf("bpickle: unsupported type %T", v)
+		}
 	}
 }
 
@@ -106,6 +132,11 @@ func marshalString(v string) ([]byte, error) {
 	return append(prefix, b...), nil
 }
 
+// Tuple is a fixed-length ordered sequence that marshals as a bpickle tuple
+// (t...;) rather than a list (l...;). The Landscape server message schemas
+// use Tuple for data-point records such as (timestamp, value).
+type Tuple []any
+
 // marshalList encodes []any as l<items>; .
 func marshalList(v []any) ([]byte, error) {
 	result := []byte{'l'}
@@ -118,6 +149,52 @@ func marshalList(v []any) ([]byte, error) {
 	}
 	return append(result, ';'), nil
 }
+
+// marshalTuple encodes a Tuple as t<items>; .
+func marshalTuple(v Tuple) ([]byte, error) {
+	result := []byte{'t'}
+	for _, item := range v {
+		encoded, err := marshalValue(item)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, encoded...)
+	}
+	return append(result, ';'), nil
+}
+
+// BytesDict is a map whose keys are encoded as bpickle bytes (Python bytes)
+// rather than unicode strings. Use for messages where the schema specifies
+// Bytes() keys, such as network-activity's activities dict.
+type BytesDict map[string]any
+
+// marshalBytesKeyMap encodes map[[]byte][]any as d<key><val>...; with keys as bpickle bytes.
+// Used for network-activity where interface names must be Python bytes, not str.
+func marshalBytesKeyMap(v BytesDict) ([]byte, error) {
+	keys := make([]string, 0, len(v))
+	for k := range v {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	result := []byte{'d'}
+	for _, k := range keys {
+		encodedKey, err := marshalBytes([]byte(k))
+		if err != nil {
+			return nil, err
+		}
+		encodedVal, err := marshalValue(v[k])
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, encodedKey...)
+		result = append(result, encodedVal...)
+	}
+	return append(result, ';'), nil
+}
+
+// marshalBytesDict is an alias so the case statement can reference it cleanly.
+func marshalBytesDict(v BytesDict) ([]byte, error) { return marshalBytesKeyMap(v) }
 
 // marshalDict encodes map[string]any as d<key><val>...; with keys sorted.
 func marshalDict(v map[string]any) ([]byte, error) {

@@ -3,6 +3,7 @@ package exchange
 import (
 	"context"
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -49,10 +50,12 @@ type Exchange struct {
 	store     *persist.Store
 	transport *transport.Client
 
-	mu       sync.Mutex
-	pending  []Message
-	handlers map[string][]func(ctx context.Context, msg Message)
-	wg       sync.WaitGroup
+	mu         sync.Mutex
+	pending    []Message
+	handlers   map[string][]func(ctx context.Context, msg Message)
+	wg         sync.WaitGroup
+	insecureID string        // guarded by mu; updated from set-id messages
+	wake       chan struct{} // buffered(1); written by TriggerExchange
 }
 
 // New creates an Exchange.
@@ -62,7 +65,25 @@ func New(cfg *config.Config, store *persist.Store, tc *transport.Client) *Exchan
 		store:     store,
 		transport: tc,
 		handlers:  make(map[string][]func(ctx context.Context, msg Message)),
+		wake:      make(chan struct{}, 1),
 	}
+}
+
+// TriggerExchange wakes the exchange loop immediately (e.g. after a ping).
+// Safe to call from any goroutine. Non-blocking.
+func (e *Exchange) TriggerExchange() {
+	select {
+	case e.wake <- struct{}{}:
+	default:
+	}
+}
+
+// InsecureID returns the current insecure-id (set after registration).
+// Returns empty string if not yet registered.
+func (e *Exchange) InsecureID() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.insecureID
 }
 
 // Run starts the exchange loop. Runs until ctx is cancelled.
@@ -73,7 +94,21 @@ func (e *Exchange) Run(ctx context.Context) error {
 		return fmt.Errorf("exchange: loading state: %w", err)
 	}
 
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
+
+	// Initialise insecureID from persisted state so the ping loop can use it
+	// immediately (i.e. if already registered from a previous run).
+	e.mu.Lock()
+	e.insecureID = state.InsecureID
+	e.mu.Unlock()
+
 	for {
+		prevSecureID := state.SecureID
 		if err := e.performExchange(ctx, state); err != nil {
 			log.Printf("exchange: exchange failed: %v", err)
 		}
@@ -83,14 +118,33 @@ func (e *Exchange) Run(ctx context.Context) error {
 		hasPending := len(e.pending) > 0
 		e.mu.Unlock()
 
+		justRegistered := prevSecureID == "" && state.SecureID != ""
 		interval := e.cfg.ExchangeInterval
-		if hasPending {
+		// Use urgent interval until registration is complete, so the client
+		// polls quickly after the server processes the registration request.
+		// Also use urgent interval immediately after registration so device
+		// info is delivered without waiting 15 minutes.
+		if hasPending || state.SecureID == "" || justRegistered {
 			interval = e.cfg.UrgentExchangeInterval
 		}
 
+		if timer == nil {
+			timer = time.NewTimer(interval)
+		} else {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(interval)
+		}
+
 		select {
-		case <-time.After(interval):
+		case <-timer.C:
 			// next iteration
+		case <-e.wake:
+			// ping triggered an urgent exchange
 		case <-ctx.Done():
 			graceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -148,19 +202,21 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			machineID = strings.TrimSpace(string(data))
 		}
 		regMsg := Message{
-			"type":             "register",
-			"api":              apiVersion,
-			"account-name":     e.cfg.AccountName,
-			"registration-key": e.cfg.RegistrationKey,
-			"computer-title":   e.cfg.ComputerTitle,
-			"hostname":         hostname,
-			"machine-id":       machineID,
-			"tags":             e.cfg.Tags,
-			"access-group":     e.cfg.AccessGroup,
+			"type":                  "register",
+			"api":                   apiVersion,
+			"account_name":          e.cfg.AccountName,
+			"registration_password": e.cfg.RegistrationKey,
+			"computer_title":        e.cfg.ComputerTitle,
+			"hostname":              hostname,
+			"machine_id":            machineID,
+			"tags":                  e.cfg.Tags,
+			"access_group":          e.cfg.AccessGroup,
 		}
 		e.mu.Lock()
 		e.pending = append([]Message{regMsg}, e.pending...)
 		e.mu.Unlock()
+		log.Printf("exchange: sending registration request (account=%q title=%q key-set=%v)",
+			e.cfg.AccountName, e.cfg.ComputerTitle, e.cfg.RegistrationKey != "")
 	}
 
 	// Take a snapshot of pending under lock and clear the queue.
@@ -170,10 +226,48 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	e.pending = nil
 	e.mu.Unlock()
 
+	// Filter out message types the server has not declared it handles.
+	// The server's accepted types are stored in state.AcceptedTypes after the
+	// first accepted-types exchange. Until then (empty list), allow all types
+	// through so that the initial register/registration messages can be sent.
+	if len(state.AcceptedTypes) > 0 {
+		accepted := make(map[string]bool, len(state.AcceptedTypes))
+		for _, t := range state.AcceptedTypes {
+			accepted[t] = true
+		}
+		// Always allow protocol-level messages regardless of accepted types.
+		for _, t := range []string{"register", "resynchronize", "operation-result"} {
+			accepted[t] = true
+		}
+		filtered := snapshot[:0]
+		for _, m := range snapshot {
+			t, _ := m["type"].(string)
+			if accepted[t] {
+				filtered = append(filtered, m)
+			}
+		}
+		if len(filtered) != len(snapshot) {
+			dropped := len(snapshot) - len(filtered)
+			log.Printf("exchange: dropped %d message(s) with types not in server accepted list", dropped)
+		}
+		snapshot = filtered
+	}
+
 	// Build the messages slice as []any for bpickle.
 	messages := make([]any, len(snapshot))
 	for i, m := range snapshot {
 		messages[i] = map[string]any(m)
+	}
+
+	// Log outbound messages so we can confirm data is reaching the server.
+	if len(snapshot) > 0 {
+		outTypes := make([]string, 0, len(snapshot))
+		for _, m := range snapshot {
+			if t, ok := m["type"].(string); ok {
+				outTypes = append(outTypes, t)
+			}
+		}
+		log.Printf("exchange: sending %d message(s): %v", len(snapshot), outTypes)
 	}
 
 	// Assemble the exchange payload.
@@ -188,7 +282,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	}
 
 	// Include client-accepted-types when we do not have a confirmed hash from the server.
-	if state.AcceptedTypesHash == "" {
+	if len(state.AcceptedTypesHash) == 0 {
 		e.mu.Lock()
 		clientTypes := make([]string, 0, len(e.handlers))
 		for t := range e.handlers {
@@ -210,14 +304,20 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	}
 
 	// Build request headers.
+	// After registration, X-Computer-ID is the secure-id (long string).
+	// Before registration, no X-Computer-ID is sent (matches Python client).
 	headers := map[string]string{
-		"X-Message-API":    apiVersion,
-		"X-Computer-ID":    state.InsecureID,
-		"X-Exchange-Token": state.ExchangeToken,
+		"X-Message-API": apiVersion,
+	}
+	if state.SecureID != "" {
+		headers["X-Computer-ID"] = state.SecureID
+	}
+	if state.ExchangeToken != "" {
+		headers["X-Exchange-Token"] = state.ExchangeToken
 	}
 
 	// POST to server.
-	responseBytes, err := e.transport.Post(ctx, e.cfg.URL+"/message-system", headers, body)
+	responseBytes, err := e.transport.Post(ctx, e.cfg.URL, headers, body)
 	if err != nil {
 		// Re-queue the snapshot so messages are not lost on transport failure.
 		e.mu.Lock()
@@ -236,13 +336,45 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		return fmt.Errorf("exchange: response is not a dict")
 	}
 
-	// Advance outbound sequence by the number of messages sent.
-	state.OutboundSequence += int64(len(snapshot))
-
-	// Adopt the server's next-expected-sequence.
-	if v, ok := response["next-expected-sequence"]; ok {
-		state.NextExpectedFromServer = toInt64(v)
+	// Log the inbound messages for debugging.
+	inbound := extractMessages(response)
+	log.Printf("exchange: client-seq=%d server-client-seq=%d server-ack=%v",
+		state.OutboundSequence, state.NextExpectedFromServer, response["next-expected-sequence"])
+	if len(inbound) == 0 {
+		log.Printf("exchange: server response: no messages")
+	} else {
+		for _, m := range inbound {
+			log.Printf("exchange: server message: type=%q", m["type"])
+		}
 	}
+
+	// response["next-expected-sequence"] is the server's ACK: the next client→server
+	// sequence the server wants to receive. Use it to set OutboundSequence.
+	sentUpTo := state.OutboundSequence + int64(len(snapshot))
+	serverACK := sentUpTo // default: assume all messages ACK'd
+	if v, ok := response["next-expected-sequence"]; ok {
+		serverACK = toInt64(v)
+	}
+
+	// If the server's ACK is below what we just sent, re-enqueue un-ACK'd messages
+	// so they are retransmitted at the correct sequence on the next exchange.
+	if serverACK < sentUpTo {
+		nAcked := int(serverACK - state.OutboundSequence)
+		if nAcked < 0 {
+			nAcked = 0
+		}
+		if nAcked < len(snapshot) {
+			e.mu.Lock()
+			e.pending = append(snapshot[nAcked:], e.pending...)
+			e.mu.Unlock()
+			log.Printf("exchange: server ACK'd %d/%d messages (our seq=%d, server wants=%d); re-queuing %d",
+				nAcked, len(snapshot), state.OutboundSequence, serverACK, len(snapshot)-nAcked)
+		}
+	}
+	state.OutboundSequence = serverACK
+
+	// Advance server→client sequence for each server message we receive.
+	state.NextExpectedFromServer += int64(len(inbound))
 
 	// Store the exchange token for the next request.
 	if v, ok := response["next-exchange-token"]; ok {
@@ -252,45 +384,87 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	}
 
 	// Process inbound messages: special types are handled here; others go to subscribers.
-	specialTypes := map[string]bool{
-		"set-id":         true,
-		"accepted-types": true,
-		"resynchronize":  true,
-	}
-
-	for _, msg := range extractMessages(response) {
+	for _, msg := range inbound {
 		msgType, _ := msg["type"].(string)
 
 		switch msgType {
 		case "set-id":
-			if v, ok := msg["secure-id"]; ok {
-				state.SecureID, _ = v.(string)
+			if v, ok := msg["id"]; ok {
+				switch x := v.(type) {
+				case string:
+					state.SecureID = x
+				case []byte:
+					state.SecureID = string(x)
+				case int64:
+					state.SecureID = fmt.Sprintf("%d", x)
+				}
 			}
 			if v, ok := msg["insecure-id"]; ok {
-				state.InsecureID, _ = v.(string)
+				switch x := v.(type) {
+				case string:
+					state.InsecureID = x
+				case []byte:
+					state.InsecureID = string(x)
+				case int64:
+					state.InsecureID = fmt.Sprintf("%d", x)
+				}
 			}
-
+			// Reset plugin state so all monitors re-report to the newly registered server.
+			state.PluginState = nil
+			// Keep insecureID in sync for the ping loop.
+			e.mu.Lock()
+			e.insecureID = state.InsecureID
+			e.mu.Unlock()
+			log.Printf("exchange: registered successfully (secure-id=%q insecure-id=%q)", state.SecureID, state.InsecureID)
 		case "accepted-types":
 			if v, ok := msg["types"]; ok {
-				if list, ok := v.([]any); ok {
-					types := make([]string, 0, len(list))
-					for _, t := range list {
-						if s, ok := t.(string); ok {
+				if l, ok := v.([]any); ok {
+					var types []string
+					for _, t := range l {
+						switch s := t.(type) {
+						case string:
 							types = append(types, s)
+						case []byte:
+							types = append(types, string(s))
 						}
 					}
 					state.AcceptedTypes = types
 					state.AcceptedTypesHash = hashTypes(types)
+					log.Printf("exchange: accepted-types: %d types", len(types))
 				}
 			}
-
 		case "resynchronize":
-			state.OutboundSequence = 0
-			state.NextExpectedFromServer = 0
+			// Do NOT reset OutboundSequence — the server still expects the same
+			// sequence number. Just clear plugin state so monitors re-report,
+			// and send the resynchronize ack back so the server calls
+			// computer.resynchronize() which resets its own next_expected_sequence.
 			state.PluginState = nil
+			// Send resynchronize back to the server with the operation-id.
+			resyncAck := Message{"type": "resynchronize"}
+			if opid, ok := msg["operation-id"]; ok {
+				resyncAck["operation-id"] = opid
+			}
+			e.mu.Lock()
+			e.pending = append([]Message{resyncAck}, e.pending...)
+			e.mu.Unlock()
+			log.Printf("exchange: received resynchronize from server, queuing ack")
+		case "unknown-id":
+			log.Printf("exchange: server does not recognize our identity, clearing IDs to re-register")
+			state.SecureID = ""
+			state.InsecureID = ""
+		case "registration":
+			info, _ := msgBytes(msg["info"])
+			switch info {
+			case "unknown-account", "max-pending-computers":
+				log.Printf("exchange: registration failed: %s", info)
+			default:
+				log.Printf("exchange: registration pending (info=%q)", info)
+			}
+		case "registration-complete":
+			log.Printf("exchange: registration complete")
 		}
 
-		if !specialTypes[msgType] {
+		if !isSpecialMessageType(msgType) {
 			e.mu.Lock()
 			handlers := make([]func(ctx context.Context, msg Message), len(e.handlers[msgType]))
 			copy(handlers, e.handlers[msgType])
@@ -312,12 +486,53 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		}
 	}
 
-	// Persist updated state.
-	if err := e.store.Save(state); err != nil {
+	// Persist updated state via a serialized read-modify-write, preserving any
+	// plugin state saved by monitor goroutines since the last exchange.
+	if err := e.store.Update(func(current *persist.State) error {
+		mergedPluginState := state.PluginState
+		if mergedPluginState == nil {
+			mergedPluginState = make(map[string]json.RawMessage)
+		}
+		for k, v := range current.PluginState {
+			mergedPluginState[k] = v
+		}
+
+		current.SecureID = state.SecureID
+		current.InsecureID = state.InsecureID
+		current.ServerUUID = state.ServerUUID
+		current.OutboundSequence = state.OutboundSequence
+		current.NextExpectedFromServer = state.NextExpectedFromServer
+		current.ExchangeToken = state.ExchangeToken
+		current.AcceptedTypes = append(current.AcceptedTypes[:0], state.AcceptedTypes...)
+		current.AcceptedTypesHash = append(current.AcceptedTypesHash[:0], state.AcceptedTypesHash...)
+		current.PluginState = mergedPluginState
+
+		return nil
+	}); err != nil {
 		return fmt.Errorf("exchange: saving state: %w", err)
 	}
 
 	return nil
+}
+
+func isSpecialMessageType(msgType string) bool {
+	switch msgType {
+	case "set-id", "accepted-types", "resynchronize", "unknown-id", "registration", "registration-complete":
+		return true
+	default:
+		return false
+	}
+}
+
+// msgBytes converts a bpickle value that may be []byte or string to string.
+func msgBytes(v any) (string, bool) {
+	switch x := v.(type) {
+	case string:
+		return x, true
+	case []byte:
+		return string(x), true
+	}
+	return "", false
 }
 
 // toInt64 converts numeric bpickle values to int64.
@@ -355,13 +570,11 @@ func extractMessages(response map[string]any) []Message {
 	return msgs
 }
 
-// hashTypes returns the MD5 hex digest of comma-joined sorted type names,
-// matching the Python client: md5(",".join(sorted(types))).
-func hashTypes(types []string) string {
-	sorted := make([]string, len(types))
-	copy(sorted, types)
-	sort.Strings(sorted)
-	joined := strings.Join(sorted, ",")
+// hashTypes returns the raw MD5 digest of semicolon-joined type names,
+// matching the Python client: md5(";".join(types)).digest().
+// The list is NOT sorted — it must be in the order provided by the server.
+func hashTypes(types []string) []byte {
+	joined := strings.Join(types, ";")
 	h := md5.Sum([]byte(joined))
-	return fmt.Sprintf("%x", h)
+	return h[:]
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/canonical/landscape-client-core/internal/bpickle"
 	"github.com/canonical/landscape-client-core/internal/exchange"
 	"github.com/canonical/landscape-client-core/internal/persist"
 )
@@ -119,10 +120,10 @@ func (p *NetworkActivity) readDev() (rx, tx map[string]int64, err error) {
 }
 
 // delta computes per-interface deltas since the last sample. Returns a map of
-// interface name → []any{[]any{timestamp, rxDelta, txDelta}} matching the
+// interface name (as bytes) → []any{[]any{timestamp, rxDelta, txDelta}} matching the
 // Python network-activity message format.
-func (p *NetworkActivity) delta(ts int64, rx, tx map[string]int64) map[string][]any {
-	activities := make(map[string][]any)
+func (p *NetworkActivity) delta(ts int64, rx, tx map[string]int64) bpickle.BytesDict {
+	activities := make(bpickle.BytesDict)
 	for iface, rxNow := range rx {
 		txNow := tx[iface]
 		lastRx, hadRx := p.lastRx[iface]
@@ -142,7 +143,7 @@ func (p *NetworkActivity) delta(ts int64, rx, tx map[string]int64) map[string][]
 		if rxDelta == 0 && txDelta == 0 {
 			continue
 		}
-		activities[iface] = []any{[]any{ts, rxDelta, txDelta}}
+		activities[iface] = []any{bpickle.Tuple{ts, rxDelta, txDelta}}
 	}
 	return activities
 }

@@ -89,8 +89,8 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func defaultResponse() map[string]any {
 	return map[string]any{
-		"messages":               []any{},
-		"next-expected-sequence": int64(0),
+		"messages": []any{},
+		// Omit next-expected-sequence — the client will default to ACK'ing all sent messages.
 	}
 }
 
@@ -151,7 +151,7 @@ func TestRegistration(t *testing.T) {
 		"messages": []any{
 			map[string]any{
 				"type":        "set-id",
-				"secure-id":   "sec123",
+				"id":          "sec123",
 				"insecure-id": "ins456",
 			},
 		},
@@ -176,11 +176,11 @@ func TestRegistration(t *testing.T) {
 	if first["type"] != "register" {
 		t.Errorf("first message type: got %v, want register", first["type"])
 	}
-	if first["account-name"] != "test-account" {
-		t.Errorf("account-name: got %v, want test-account", first["account-name"])
+	if first["account_name"] != "test-account" {
+		t.Errorf("account-name: got %v, want test-account", first["account_name"])
 	}
-	if first["registration-key"] != "test-key" {
-		t.Errorf("registration-key: got %v, want test-key", first["registration-key"])
+	if first["registration_password"] != "test-key" {
+		t.Errorf("registration-key: got %v, want test-key", first["registration_password"])
 	}
 
 	// Verify state was persisted with the new SecureID / InsecureID.
@@ -251,7 +251,8 @@ func TestSequenceTracking(t *testing.T) {
 	state := ts.freshState(t)
 	state.SecureID = "sec123"
 
-	// Server says it expects sequence 5 next from us.
+	// Server ACKs with next-expected-sequence=5, meaning it wants client msg 5 next.
+	// This advances our OutboundSequence to 5 (the server's ACK).
 	ts.fs.push(map[string]any{
 		"messages":               []any{},
 		"next-expected-sequence": int64(5),
@@ -262,25 +263,26 @@ func TestSequenceTracking(t *testing.T) {
 		t.Fatalf("performExchange 1: %v", err)
 	}
 
-	// OutboundSequence advances by the snapshot size (1 message sent).
-	if state.OutboundSequence != 1 {
-		t.Errorf("OutboundSequence: got %d, want 1", state.OutboundSequence)
+	// OutboundSequence must be set to what the server ACK'd (5), not self-incremented.
+	if state.OutboundSequence != 5 {
+		t.Errorf("OutboundSequence: got %d, want 5", state.OutboundSequence)
 	}
-	// NextExpectedFromServer is updated from the response.
-	if state.NextExpectedFromServer != 5 {
-		t.Errorf("NextExpectedFromServer: got %d, want 5", state.NextExpectedFromServer)
+	// NextExpectedFromServer advances only for server→client messages (none here).
+	if state.NextExpectedFromServer != 0 {
+		t.Errorf("NextExpectedFromServer: got %d, want 0", state.NextExpectedFromServer)
 	}
 
-	// Second exchange should carry the updated sequence and next-expected values.
+	// Second exchange should carry the server-ACK'd sequence (5).
 	if err := ts.ex.performExchange(context.Background(), state); err != nil {
 		t.Fatalf("performExchange 2: %v", err)
 	}
 	p2 := ts.fs.get(1).payload
-	if seq := toInt64(p2["sequence"]); seq != 1 {
-		t.Errorf("second exchange sequence: got %d, want 1", seq)
+	if seq := toInt64(p2["sequence"]); seq != 5 {
+		t.Errorf("second exchange sequence: got %d, want 5", seq)
 	}
-	if nes := toInt64(p2["next-expected-sequence"]); nes != 5 {
-		t.Errorf("second exchange next-expected-sequence: got %d, want 5", nes)
+	// next-expected-sequence in outgoing payload = our server→client tracking (0, no server msgs).
+	if nes := toInt64(p2["next-expected-sequence"]); nes != 0 {
+		t.Errorf("second exchange next-expected-sequence: got %d, want 0", nes)
 	}
 }
 
@@ -315,8 +317,8 @@ func TestAcceptedTypes(t *testing.T) {
 		t.Errorf("AcceptedTypes length: got %d, want 2", len(state.AcceptedTypes))
 	}
 	expectedHash := hashTypes([]string{"do-something", "test-msg"})
-	if state.AcceptedTypesHash != expectedHash {
-		t.Errorf("AcceptedTypesHash: got %q, want %q", state.AcceptedTypesHash, expectedHash)
+	if string(state.AcceptedTypesHash) != string(expectedHash) {
+		t.Errorf("AcceptedTypesHash: got %x, want %x", state.AcceptedTypesHash, expectedHash)
 	}
 
 	// Second exchange: should send the hash but NOT include client-accepted-types.
@@ -327,8 +329,8 @@ func TestAcceptedTypes(t *testing.T) {
 	if _, ok := p2["client-accepted-types"]; ok {
 		t.Error("second exchange should not include client-accepted-types")
 	}
-	if hash, _ := p2["accepted-types"].(string); hash != expectedHash {
-		t.Errorf("accepted-types hash: got %q, want %q", hash, expectedHash)
+	if hash, _ := p2["accepted-types"].([]byte); string(hash) != string(expectedHash) {
+		t.Errorf("accepted-types hash: got %x, want %x", hash, expectedHash)
 	}
 }
 
@@ -345,7 +347,7 @@ func TestResynchronize(t *testing.T) {
 
 	ts.fs.push(map[string]any{
 		"messages": []any{
-			map[string]any{"type": "resynchronize"},
+			map[string]any{"type": "resynchronize", "operation-id": int64(42)},
 		},
 		"next-expected-sequence": int64(10),
 	})
@@ -354,11 +356,29 @@ func TestResynchronize(t *testing.T) {
 		t.Fatalf("performExchange: %v", err)
 	}
 
-	if state.OutboundSequence != 0 {
-		t.Errorf("OutboundSequence after resync: got %d, want 0", state.OutboundSequence)
+	// OutboundSequence must NOT be reset — it stays at the server's ACK value.
+	// Resetting it to 0 causes an infinite resynchronize loop because the server
+	// ignores all messages with seq < its next_expected_sequence.
+	if state.OutboundSequence != 10 {
+		t.Errorf("OutboundSequence after resync: got %d, want 10 (must not reset)", state.OutboundSequence)
 	}
-	if state.NextExpectedFromServer != 0 {
-		t.Errorf("NextExpectedFromServer after resync: got %d, want 0", state.NextExpectedFromServer)
+	// NextExpectedFromServer advances by 1 (the resynchronize message received).
+	if state.NextExpectedFromServer != 8 {
+		t.Errorf("NextExpectedFromServer after resync: got %d, want 8", state.NextExpectedFromServer)
+	}
+	// A resynchronize ack must be queued so the server resets its next_expected_sequence.
+	ts.ex.mu.Lock()
+	pending := make([]Message, len(ts.ex.pending))
+	copy(pending, ts.ex.pending)
+	ts.ex.mu.Unlock()
+	if len(pending) == 0 {
+		t.Fatal("resynchronize ack not queued")
+	}
+	if pending[0]["type"] != "resynchronize" {
+		t.Errorf("pending[0] type: got %v, want resynchronize", pending[0]["type"])
+	}
+	if pending[0]["operation-id"] != int64(42) {
+		t.Errorf("pending[0] operation-id: got %v, want 42", pending[0]["operation-id"])
 	}
 }
 

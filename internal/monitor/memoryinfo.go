@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/canonical/landscape-client-core/internal/bpickle"
 	"github.com/canonical/landscape-client-core/internal/exchange"
 	"github.com/canonical/landscape-client-core/internal/persist"
 )
@@ -48,7 +49,7 @@ func (p *MemoryInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *pers
 			}
 			msg := exchange.Message{
 				"type":        "memory-info",
-				"memory-info": []any{[]any{t.Unix(), freeMemMB, freeSwapMB}},
+				"memory-info": []any{bpickle.Tuple{t.Unix(), freeMemMB, freeSwapMB}},
 			}
 			if err := sink.Send(ctx, msg); err != nil {
 				log.Printf("memory-info: send: %v", err)

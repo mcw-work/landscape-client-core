@@ -2,7 +2,6 @@ package monitor
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"time"
 
@@ -34,6 +33,7 @@ func (p *SnapPackagesPlugin) Name() string { return "snaps" }
 // sent on every tick. On snapd error the message is sent with an empty
 // installed list to keep the server in sync.
 func (p *SnapPackagesPlugin) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
+	p.send(ctx, sink)
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 	for {
@@ -41,17 +41,21 @@ func (p *SnapPackagesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			installed := p.collect(ctx)
-			msg := exchange.Message{
-				"type": "snaps",
-				"snaps": map[string]any{
-					"installed": installed,
-				},
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("snaps: send: %v", err)
-			}
+			p.send(ctx, sink)
 		}
+	}
+}
+
+func (p *SnapPackagesPlugin) send(ctx context.Context, sink exchange.MessageSink) {
+	installed := p.collect(ctx)
+	msg := exchange.Message{
+		"type": "snaps",
+		"snaps": map[string]any{
+			"installed": installed,
+		},
+	}
+	if err := sink.Send(ctx, msg); err != nil {
+		log.Printf("snaps: send: %v", err)
 	}
 }
 
@@ -65,17 +69,24 @@ func (p *SnapPackagesPlugin) collect(ctx context.Context) []any {
 	}
 	result := make([]any, 0, len(snaps))
 	for _, s := range snaps {
+		snapID := s.ID
+		// Devmode snaps have no store ID — use a name-based fallback so the
+		// server can still index them (matches Python client behaviour).
+		if snapID == "" {
+			snapID = "no-serial-" + s.Name
+		}
 		result = append(result, map[string]any{
-			"id":               s.Name,
+			"id":               snapID,
 			"name":             s.Name,
 			"version":          s.Version,
-			"revision":         fmt.Sprintf("%d", s.Revision),
+			"revision":         s.Revision,
 			"tracking-channel": s.Channel,
 			"publisher": map[string]any{
 				"username":   s.Developer,
 				"validation": "",
 			},
-			"confinement": "",
+			"confinement": s.Confinement,
+			"summary":     s.Summary,
 		})
 	}
 	return result

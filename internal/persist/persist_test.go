@@ -43,7 +43,7 @@ func TestLoadExistingFile(t *testing.T) {
 		NextExpectedFromServer: 7,
 		ExchangeToken:          "tok-abc",
 		AcceptedTypes:          []string{"a", "b"},
-		AcceptedTypesHash:      "hash-xyz",
+		AcceptedTypesHash:      []byte("hash-xyz"),
 	}
 	data, _ := json.Marshal(want)
 	if err := os.WriteFile(path, data, 0600); err != nil {
@@ -85,7 +85,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		NextExpectedFromServer: 200,
 		ExchangeToken:          "tok-roundtrip",
 		AcceptedTypes:          []string{"type1", "type2", "type3"},
-		AcceptedTypesHash:      "hash-roundtrip",
+		AcceptedTypesHash:      []byte("hash-roundtrip"),
 		PluginState: map[string]json.RawMessage{
 			"myplugin": json.RawMessage(`{"count":5}`),
 		},
@@ -109,8 +109,8 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.ExchangeToken != want.ExchangeToken {
 		t.Errorf("ExchangeToken: got %q, want %q", got.ExchangeToken, want.ExchangeToken)
 	}
-	if got.AcceptedTypesHash != want.AcceptedTypesHash {
-		t.Errorf("AcceptedTypesHash: got %q, want %q", got.AcceptedTypesHash, want.AcceptedTypesHash)
+	if string(got.AcceptedTypesHash) != string(want.AcceptedTypesHash) {
+		t.Errorf("AcceptedTypesHash: got %x, want %x", got.AcceptedTypesHash, want.AcceptedTypesHash)
 	}
 	// Unmarshal the raw message to compare semantically (MarshalIndent may re-indent it).
 	var pluginData map[string]int
@@ -204,16 +204,14 @@ func TestPluginStateAccessorRoundTrip(t *testing.T) {
 		Message string `json:"message"`
 	}
 
-	state := &persist.State{PluginState: make(map[string]json.RawMessage)}
-	acc := store.Accessor("myplugin", state)
+	// SetPluginState now auto-saves via read-modify-write; no explicit
+	// store.Save call is needed. Use nil initial state to exercise the
+	// lazy-load path in the accessor.
+	acc := store.Accessor("myplugin", nil)
 
 	want := myPluginState{Count: 42, Message: "hello"}
 	if err := acc.SetPluginState(want); err != nil {
 		t.Fatalf("SetPluginState failed: %v", err)
-	}
-
-	if err := store.Save(state); err != nil {
-		t.Fatalf("Save failed: %v", err)
 	}
 
 	loaded, err := store.Load()
@@ -281,5 +279,109 @@ func TestConcurrentSave(t *testing.T) {
 	var final persist.State
 	if err := json.Unmarshal(data, &final); err != nil {
 		t.Fatalf("final state is not valid JSON: %v\ncontents: %s", err, data)
+	}
+}
+
+// TestSetPluginStatePreservesExchangeFields verifies that SetPluginState uses a
+// read-modify-write so it does not clobber exchange fields saved by the exchange
+// runner concurrently.
+func TestSetPluginStatePreservesExchangeFields(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := persist.New(filepath.Join(dir, "state.json"))
+
+	// Simulate exchange saving its state first.
+	exchangeState := &persist.State{
+		SecureID:         "sec-123",
+		OutboundSequence: 42,
+	}
+	if err := store.Save(exchangeState); err != nil {
+		t.Fatalf("initial Save failed: %v", err)
+	}
+
+	// Plugin accessor (nil initial state — lazy load path).
+	acc := store.Accessor("myplugin", nil)
+	if err := acc.SetPluginState(map[string]int{"count": 7}); err != nil {
+		t.Fatalf("SetPluginState failed: %v", err)
+	}
+
+	// The exchange fields must still be intact after the plugin save.
+	got, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if got.SecureID != "sec-123" {
+		t.Errorf("SecureID clobbered: got %q, want %q", got.SecureID, "sec-123")
+	}
+	if got.OutboundSequence != 42 {
+		t.Errorf("OutboundSequence clobbered: got %d, want 42", got.OutboundSequence)
+	}
+
+	// And the plugin state must be there.
+	acc2 := store.Accessor("myplugin", got)
+	var ps map[string]int
+	if err := acc2.GetPluginState(&ps); err != nil {
+		t.Fatalf("GetPluginState failed: %v", err)
+	}
+	if ps["count"] != 7 {
+		t.Errorf("plugin state count: got %d, want 7", ps["count"])
+	}
+}
+
+func TestUpdatePreservesConcurrentPluginAndExchangeState(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := persist.New(filepath.Join(dir, "state.json"))
+
+	if err := store.Save(&persist.State{
+		SecureID:         "sec-123",
+		OutboundSequence: 1,
+	}); err != nil {
+		t.Fatalf("initial Save failed: %v", err)
+	}
+
+	pluginAcc := store.Accessor("plugin-a", nil)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		if err := pluginAcc.SetPluginState(map[string]int{"count": 3}); err != nil {
+			t.Errorf("SetPluginState failed: %v", err)
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		if err := store.Update(func(state *persist.State) error {
+			state.OutboundSequence = 99
+			state.ExchangeToken = "tok-123"
+			return nil
+		}); err != nil {
+			t.Errorf("Update failed: %v", err)
+		}
+	}()
+
+	wg.Wait()
+
+	got, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if got.OutboundSequence != 99 {
+		t.Fatalf("OutboundSequence: got %d, want 99", got.OutboundSequence)
+	}
+	if got.ExchangeToken != "tok-123" {
+		t.Fatalf("ExchangeToken: got %q, want tok-123", got.ExchangeToken)
+	}
+
+	acc := store.Accessor("plugin-a", got)
+	var pluginState map[string]int
+	if err := acc.GetPluginState(&pluginState); err != nil {
+		t.Fatalf("GetPluginState failed: %v", err)
+	}
+	if pluginState["count"] != 3 {
+		t.Fatalf("plugin count: got %d, want 3", pluginState["count"])
 	}
 }

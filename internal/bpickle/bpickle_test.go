@@ -285,3 +285,84 @@ func TestDeepNested(t *testing.T) {
 		t.Errorf("deep-nested round-trip mismatch:\ngot  %#v\nwant %#v", got, outer)
 	}
 }
+
+// TestMarshalConcreteSliceAndMapTypes verifies that concrete slice/map types
+// (e.g. []map[string]any, map[string][]string) marshal successfully via the
+// reflection fallback. These types are produced by monitor plugins and must
+// round-trip through bpickle without error.
+func TestMarshalConcreteSliceAndMapTypes(t *testing.T) {
+	t.Run("slice_of_map", func(t *testing.T) {
+		// Simulates []map[string]any used by network-device, processor-info.
+		devices := []map[string]any{
+			{"name": "eth0", "mac": "aa:bb:cc:dd:ee:ff"},
+			{"name": "lo", "mac": "00:00:00:00:00:00"},
+		}
+		data, err := Marshal(devices)
+		if err != nil {
+			t.Fatalf("Marshal([]map[string]any) failed: %v", err)
+		}
+		// Must decode back as a list of dicts.
+		got, err := Unmarshal(data)
+		if err != nil {
+			t.Fatalf("Unmarshal failed: %v", err)
+		}
+		list, ok := got.([]any)
+		if !ok || len(list) != 2 {
+			t.Fatalf("expected []any of length 2, got %T %v", got, got)
+		}
+		first, ok := list[0].(map[string]any)
+		if !ok {
+			t.Fatalf("expected map[string]any element, got %T", list[0])
+		}
+		if first["name"] != "eth0" {
+			t.Errorf("name: got %v, want eth0", first["name"])
+		}
+	})
+
+	t.Run("map_of_string_slices", func(t *testing.T) {
+		// Simulates map[string][]string used by users plugin (group members).
+		members := map[string][]string{
+			"admins": {"alice", "bob"},
+			"users":  {"carol"},
+		}
+		data, err := Marshal(members)
+		if err != nil {
+			t.Fatalf("Marshal(map[string][]string) failed: %v", err)
+		}
+		got, err := Unmarshal(data)
+		if err != nil {
+			t.Fatalf("Unmarshal failed: %v", err)
+		}
+		d, ok := got.(map[string]any)
+		if !ok {
+			t.Fatalf("expected map[string]any, got %T", got)
+		}
+		admins, ok := d["admins"].([]any)
+		if !ok || len(admins) != 2 {
+			t.Fatalf("admins: expected []any of len 2, got %T %v", d["admins"], d["admins"])
+		}
+	})
+
+	t.Run("nested_message_with_concrete_slice", func(t *testing.T) {
+		// Simulates an exchange.Message where "devices" is []map[string]any.
+		processors := []map[string]any{
+			{"processor-id": 0, "model": "Intel"},
+		}
+		msg := map[string]any{
+			"type":       "processor-info",
+			"processors": processors,
+		}
+		data, err := Marshal(msg)
+		if err != nil {
+			t.Fatalf("Marshal(exchange message with concrete slice) failed: %v", err)
+		}
+		got, err := Unmarshal(data)
+		if err != nil {
+			t.Fatalf("Unmarshal failed: %v", err)
+		}
+		d := got.(map[string]any)
+		if d["type"] != "processor-info" {
+			t.Errorf("type: got %v", d["type"])
+		}
+	})
+}

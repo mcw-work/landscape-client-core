@@ -3,12 +3,10 @@ package integration_test
 import (
 	"context"
 	"crypto/md5"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -63,8 +61,8 @@ func (fs *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 
 func emptyResponse() map[string]any {
 	return map[string]any{
-		"messages":               []any{},
-		"next-expected-sequence": int64(0),
+		"messages": []any{},
+		// Omit next-expected-sequence — the client will default to ACK'ing all sent messages.
 	}
 }
 
@@ -166,13 +164,10 @@ func toInt64(v any) int64 {
 
 // hashTypes returns the MD5 hex digest of comma-joined sorted type names,
 // mirroring the exchange package's internal implementation.
-func hashTypes(types []string) string {
-	sorted := make([]string, len(types))
-	copy(sorted, types)
-	sort.Strings(sorted)
-	joined := strings.Join(sorted, ",")
+func hashTypes(types []string) []byte {
+	joined := strings.Join(types, ";")
 	h := md5.Sum([]byte(joined))
-	return fmt.Sprintf("%x", h)
+	return h[:]
 }
 
 // -----------------------------------------------------------------------
@@ -192,7 +187,7 @@ func newTestExchange(t *testing.T, serverURL string, initialState *persist.State
 	}
 
 	cfg := config.Defaults()
-	cfg.URL = serverURL
+	cfg.URL = serverURL + "/message-system"
 	cfg.AccountName = "test-account"
 	cfg.RegistrationKey = "test-key"
 	cfg.ComputerTitle = "test-computer"
@@ -236,13 +231,12 @@ func TestRegistrationFlow(t *testing.T) {
 		"messages": []any{
 			map[string]any{
 				"type":        "set-id",
-				"secure-id":   "test-secure-id-123",
+				"id":          "test-secure-id-123",
 				"insecure-id": "test-insecure-id-456",
 			},
 		},
 		"next-expected-sequence": int64(1),
 	})
-
 	ex, store := newTestExchange(t, fs.URL(), nil)
 	startExchange(t, ex)
 
@@ -314,7 +308,7 @@ func TestSequenceTracking(t *testing.T) {
 		t.Errorf("first exchange sequence: got %d, want 0", seq0)
 	}
 
-	// Second exchange: OutboundSequence advanced by 1 after the first exchange,
+	// Second exchange: OutboundSequence was set to server's ACK (1) after the first exchange,
 	// so sequence must be 1.
 	seq1 := toInt64(fs.get(1)["sequence"])
 	if seq1 != 1 {
@@ -355,10 +349,11 @@ func TestResynchronize(t *testing.T) {
 		t.Errorf("first exchange sequence: got %d, want 5", seq0)
 	}
 
-	// Second exchange: OutboundSequence was reset to 0 by resynchronize.
+	// Second exchange: OutboundSequence must NOT be reset — it stays at the server's ACK (5).
+	// The second exchange sends the queued resynchronize ack.
 	seq1 := toInt64(fs.get(1)["sequence"])
-	if seq1 != 0 {
-		t.Errorf("second exchange sequence after resync: got %d, want 0", seq1)
+	if seq1 != 5 {
+		t.Errorf("second exchange sequence after resync: got %d, want 5 (must not reset)", seq1)
 	}
 }
 
@@ -403,9 +398,9 @@ func TestAcceptedTypes(t *testing.T) {
 
 	// Second exchange: accepted-types field must contain the expected MD5 hash.
 	p2 := fs.get(1)
-	hash, _ := p2["accepted-types"].(string)
-	if hash != expectedHash {
-		t.Errorf("second exchange accepted-types hash: got %q, want %q", hash, expectedHash)
+	hash, _ := p2["accepted-types"].([]byte)
+	if string(hash) != string(expectedHash) {
+		t.Errorf("second exchange accepted-types hash: got %x, want %x", hash, expectedHash)
 	}
 
 	// Second exchange: client-accepted-types must NOT be present once the hash is confirmed.

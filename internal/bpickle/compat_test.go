@@ -85,7 +85,7 @@ func TestCompat(t *testing.T) {
 		{"int 0", int64(0), int64(0)},
 		{"int 1", int64(1), int64(1)},
 		{"int -1", int64(-1), int64(-1)},
-		{"int large", int64(1<<40), int64(1 << 40)},
+		{"int large", int64(1 << 40), int64(1 << 40)},
 		{"float 1.5", float64(1.5), float64(1.5)},
 		{"float pi", math.Pi, math.Pi},
 		{"float 0.0", float64(0.0), float64(0.0)},
@@ -123,9 +123,9 @@ func TestCompat(t *testing.T) {
 	// Python encodes known values; Go decodes them.
 	// -------------------------------------------------------------------------
 	pythonDecodeTests := []struct {
-		name      string
-		pyExpr    string
-		want      any
+		name   string
+		pyExpr string
+		want   any
 	}{
 		{"nil", "None", nil},
 		{"bool true", "True", true},

@@ -128,7 +128,9 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 	if !prev.Initialized || brand != prev.Brand {
 		snapMsg["brand"] = brand
 	}
-	if len(snapMsg) > 0 {
+	// Only send snap-info on Ubuntu Core devices (serial assertion only exists on UC).
+	// Classic Ubuntu has generic model/brand but no serial assertion.
+	if len(snapMsg) > 0 && serial != "" {
 		snapMsg["type"] = "snap-info"
 		if err := sink.Send(ctx, snapMsg); err != nil {
 			log.Printf("computer-info: send snap-info: %v", err)

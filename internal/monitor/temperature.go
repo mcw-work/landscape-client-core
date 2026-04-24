@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/canonical/landscape-client-core/internal/bpickle"
 	"github.com/canonical/landscape-client-core/internal/exchange"
 	"github.com/canonical/landscape-client-core/internal/persist"
 )
@@ -51,7 +52,7 @@ func (p *Temperature) Run(ctx context.Context, sink exchange.MessageSink, _ *per
 				msg := exchange.Message{
 					"type":         "temperature",
 					"thermal-zone": zone,
-					"temperatures": []any{[]any{t.Unix(), temp}},
+					"temperatures": []any{bpickle.Tuple{t.Unix(), temp}},
 				}
 				if err := sink.Send(ctx, msg); err != nil {
 					log.Printf("temperature: send: %v", err)

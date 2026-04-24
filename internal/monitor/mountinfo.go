@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/canonical/landscape-client-core/internal/bpickle"
 	"github.com/canonical/landscape-client-core/internal/exchange"
 	"github.com/canonical/landscape-client-core/internal/persist"
 )
@@ -70,6 +71,7 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 				continue
 			}
 
+			var hashEntries []any
 			var mountInfoEntries []any
 			var freeSpaceEntries []any
 
@@ -96,11 +98,12 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 					"filesystem":  m["filesystem"],
 					"total-space": totalSpace,
 				}
-				mountInfoEntries = append(mountInfoEntries, []any{now, mountInfoMap})
-				freeSpaceEntries = append(freeSpaceEntries, []any{now, mountPoint, freeSpace})
+				hashEntries = append(hashEntries, mountInfoMap)
+				mountInfoEntries = append(mountInfoEntries, bpickle.Tuple{now, mountInfoMap})
+				freeSpaceEntries = append(freeSpaceEntries, bpickle.Tuple{now, mountPoint, freeSpace})
 			}
 
-			layoutData, _ := json.Marshal(mountInfoEntries)
+			layoutData, _ := json.Marshal(hashEntries)
 			hash := fmt.Sprintf("%x", sha256.Sum256(layoutData))
 			if hash != saved.Hash {
 				saved.Hash = hash

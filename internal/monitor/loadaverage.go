@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/canonical/landscape-client-core/internal/bpickle"
 	"github.com/canonical/landscape-client-core/internal/exchange"
 	"github.com/canonical/landscape-client-core/internal/persist"
 )
@@ -47,7 +48,7 @@ func (p *LoadAverage) Run(ctx context.Context, sink exchange.MessageSink, _ *per
 			}
 			msg := exchange.Message{
 				"type":          "load-average",
-				"load-averages": []any{[]any{t.Unix(), load}},
+				"load-averages": []any{bpickle.Tuple{t.Unix(), load}},
 			}
 			if err := sink.Send(ctx, msg); err != nil {
 				log.Printf("load-average: send: %v", err)

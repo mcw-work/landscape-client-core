@@ -1,0 +1,10 @@
+ok  	github.com/canonical/landscape-client-core/cmd/landscape-client-core	(cached)
+ok  	github.com/canonical/landscape-client-core/integration	(cached)
+ok  	github.com/canonical/landscape-client-core/internal/bpickle	(cached)
+ok  	github.com/canonical/landscape-client-core/internal/config	(cached)
+ok  	github.com/canonical/landscape-client-core/internal/exchange	(cached)
+ok  	github.com/canonical/landscape-client-core/internal/manager	(cached)
+ok  	github.com/canonical/landscape-client-core/internal/monitor	2.677s
+ok  	github.com/canonical/landscape-client-core/internal/persist	(cached)
+ok  	github.com/canonical/landscape-client-core/internal/snapd	(cached)
+ok  	github.com/canonical/landscape-client-core/internal/transport	(cached)
