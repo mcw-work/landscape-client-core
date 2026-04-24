@@ -1,0 +1,48 @@
+name: landscape-client-core
+title: Landscape Client for Ubuntu Core
+base: core24
+version: git
+summary: Landscape client for Ubuntu Core devices
+description: |
+  Manages Ubuntu Core devices with Canonical Landscape.
+  Provides system monitoring and remote management.
+confinement: strict
+grade: stable
+contact: info@canonical.com
+license: GPL-3.0+
+donation: donate@canonical.com
+issues: http://www.canonical.com/issue
+source-code: https://www.github.com/canonical/
+website: https://www.canonical.com
+
+apps:
+  landscape-client-core:
+    command: bin/landscape-client-core
+    daemon: simple
+    restart-condition: on-failure
+    plugs:
+      - network
+      - snapd-control
+      - system-observe
+      - hardware-observe
+      - shutdown
+      - log-observe
+
+  config:
+    command: bin/landscape-client-core-config
+    plugs:
+      - network
+
+hooks:
+  configure:
+    plugs:
+      - network
+
+parts:
+  landscape-client-core:
+    plugin: go
+    source: .
+    build-snaps:
+      - go/1.22/stable
+    override-build: |
+      craftctl default
