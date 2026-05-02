@@ -88,6 +88,8 @@ func (h *ShutdownHandler) Handle(ctx context.Context, msg exchange.Message, resu
 // once when the cap is reached, then silently discards all subsequent writes.
 // It is safe for concurrent use (stdout and stderr copy goroutines).
 type limitWriter struct {
+	// Kept as a mutex because stdout/stderr are copied concurrently and both the
+	// remaining byte budget and truncated flag must stay consistent; see docs/concurrency.md.
 	mu        sync.Mutex
 	w         io.Writer
 	n         int
@@ -129,6 +131,7 @@ type AttachmentFetcher interface {
 type ScriptExecHandler struct {
 	snapCommon string
 	fetcher    AttachmentFetcher // nil = attachments not supported
+	opCtxMgr   *OperationContextManager
 }
 
 // NewScriptExecHandler creates a ScriptExecHandler.
@@ -138,6 +141,11 @@ func NewScriptExecHandler(snapCommon string, fetcher AttachmentFetcher) *ScriptE
 	return &ScriptExecHandler{snapCommon: snapCommon, fetcher: fetcher}
 }
 
+// SetOperationContextManager configures operation cancellation tracking.
+func (h *ScriptExecHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
+	h.opCtxMgr = opCtxMgr
+}
+
 func (h *ScriptExecHandler) MessageType() string { return "execute-script" }
 
 func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, result exchange.ResultSink) error {
@@ -145,6 +153,14 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 	if err != nil {
 		return err
 	}
+
+	operationCtx, cancelOperation := context.WithCancel(ctx)
+	defer cancelOperation()
+	if h.opCtxMgr != nil {
+		h.opCtxMgr.Register(opID, cancelOperation)
+		defer h.opCtxMgr.Cleanup(opID)
+	}
+
 	code, err := getString(msg, "code")
 	if err != nil {
 		return err
@@ -199,7 +215,7 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 			return nil
 		}
 		for filename, attachID := range attachments {
-			data, err := h.fetcher.FetchAttachment(ctx, attachID)
+			data, err := h.fetcher.FetchAttachment(operationCtx, attachID)
 			if err != nil {
 				_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 104,
 					fmt.Sprintf("execute-script: fetching attachment %q: %v", filename, err))
@@ -226,10 +242,10 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 	}
 
 	// Build execution context.
-	execCtx := ctx
+	execCtx := operationCtx
 	if timeLimit > 0 {
 		var cancel context.CancelFunc
-		execCtx, cancel = context.WithTimeout(ctx, time.Duration(timeLimit)*time.Second)
+		execCtx, cancel = context.WithTimeout(operationCtx, time.Duration(timeLimit)*time.Second)
 		defer cancel()
 	}
 

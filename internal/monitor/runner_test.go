@@ -20,6 +20,23 @@ type fakePlugin struct {
 	runFunc func(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error
 }
 
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func (f *fakePlugin) Name() string { return f.name }
 func (f *fakePlugin) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	return f.runFunc(ctx, sink, state)
@@ -223,7 +240,7 @@ func TestRunner_LogsPluginRunError(t *testing.T) {
 	sink := &mockSink{}
 	var calls int32
 
-	var logs bytes.Buffer
+	var logs lockedBuffer
 	oldWriter := log.Writer()
 	oldFlags := log.Flags()
 	log.SetOutput(&logs)
@@ -337,4 +354,49 @@ func TestRunner_BackoffResetsAfterHealthyRunWindow(t *testing.T) {
 	}
 
 	cancel()
+}
+
+func TestRunner_ErrgroupContextCancellationPropagatesToAllPlugins(t *testing.T) {
+	var exits int32
+	plugins := []Plugin{
+		&fakePlugin{name: "p1", runFunc: func(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
+			<-ctx.Done()
+			atomic.AddInt32(&exits, 1)
+			return ctx.Err()
+		}},
+		&fakePlugin{name: "p2", runFunc: func(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
+			<-ctx.Done()
+			atomic.AddInt32(&exits, 1)
+			return ctx.Err()
+		}},
+		&fakePlugin{name: "p3", runFunc: func(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
+			<-ctx.Done()
+			atomic.AddInt32(&exits, 1)
+			return ctx.Err()
+		}},
+	}
+
+	store := newStore(t)
+	sink := &mockSink{}
+	runner := New(plugins, sink, store)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() {
+		runner.Run(ctx) //nolint:errcheck
+		close(runDone)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-runDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return after cancellation")
+	}
+
+	if got := atomic.LoadInt32(&exits); got != 3 {
+		t.Fatalf("expected all plugins to observe cancellation, got %d", got)
+	}
 }

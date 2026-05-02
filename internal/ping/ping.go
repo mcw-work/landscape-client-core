@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/canonical/landscape-client-core/internal/bpickle"
@@ -27,8 +27,7 @@ type Pinger struct {
 	triggerExchange func()
 	tc              *transport.Client
 
-	mu       sync.Mutex
-	interval time.Duration
+	interval atomic.Value
 }
 
 // New returns a Pinger.
@@ -46,29 +45,31 @@ func New(
 	interval time.Duration,
 	tc *transport.Client,
 ) *Pinger {
-	return &Pinger{
+	p := &Pinger{
 		pingURL:         pingURL,
 		getInsecureID:   getInsecureID,
 		triggerExchange: triggerExchange,
 		tc:              tc,
-		interval:        interval,
 	}
+	p.setInterval(interval)
+	return p
 }
 
 // SetInterval updates the ping interval. Safe to call from any goroutine.
 // Takes effect from the next scheduled ping.
 func (p *Pinger) SetInterval(d time.Duration) {
-	p.mu.Lock()
-	p.interval = d
-	p.mu.Unlock()
+	p.setInterval(d)
+}
+
+// GetInterval returns the current ping interval. Safe to call from any goroutine.
+func (p *Pinger) GetInterval() time.Duration {
+	return p.interval.Load().(time.Duration)
 }
 
 // Run starts the ping loop. Blocks until ctx is cancelled, then returns nil.
 func (p *Pinger) Run(ctx context.Context) error {
 	for {
-		p.mu.Lock()
-		interval := p.interval
-		p.mu.Unlock()
+		interval := p.GetInterval()
 
 		select {
 		case <-ctx.Done():
@@ -92,6 +93,10 @@ func (p *Pinger) Run(ctx context.Context) error {
 			p.triggerExchange()
 		}
 	}
+}
+
+func (p *Pinger) setInterval(d time.Duration) {
+	p.interval.Store(d)
 }
 
 // doPing POSTs to the ping server and returns true when the server indicates

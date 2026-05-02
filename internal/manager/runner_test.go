@@ -93,6 +93,8 @@ func (m *mockResultSink) first() (resultCall, bool) {
 type fakeHandler struct {
 	msgType string
 	called  chan exchange.Message
+	started chan struct{}
+	block   <-chan struct{}
 	err     error
 	panic_  bool
 }
@@ -104,6 +106,15 @@ func newFakeHandler(msgType string) *fakeHandler {
 func (f *fakeHandler) MessageType() string { return f.msgType }
 
 func (f *fakeHandler) Handle(_ context.Context, msg exchange.Message, _ exchange.ResultSink) error {
+	if f.started != nil {
+		select {
+		case f.started <- struct{}{}:
+		default:
+		}
+	}
+	if f.block != nil {
+		<-f.block
+	}
 	if f.panic_ {
 		panic("test panic")
 	}
@@ -140,15 +151,15 @@ func TestRunner_AllHandlersRegistered(t *testing.T) {
 	h2 := newFakeHandler("remove-snaps")
 	h3 := newFakeHandler("reboot")
 
-	runner := NewRunner([]Handler{h1, h2, h3}, source, sink)
+	runner := NewRunner([]Handler{h1, h2, h3}, source, sink, 100)
 	runner.Register()
 
 	subscribed := source.subscribedTypes()
-	if len(subscribed) != 3 {
-		t.Fatalf("expected 3 subscriptions, got %d: %v", len(subscribed), subscribed)
+	if len(subscribed) != 4 {
+		t.Fatalf("expected 4 subscriptions, got %d: %v", len(subscribed), subscribed)
 	}
 
-	want := map[string]bool{"install-snaps": true, "remove-snaps": true, "reboot": true}
+	want := map[string]bool{"install-snaps": true, "remove-snaps": true, "reboot": true, "cancel-operation": true}
 	for _, typ := range subscribed {
 		if !want[typ] {
 			t.Errorf("unexpected subscription: %q", typ)
@@ -163,7 +174,7 @@ func TestRunner_InboundMessageDispatched(t *testing.T) {
 	sink := &mockResultSink{}
 
 	h := newFakeHandler("install-snaps")
-	runner := NewRunner([]Handler{h}, source, sink)
+	runner := NewRunner([]Handler{h}, source, sink, 100)
 	runner.Register()
 
 	msg := exchange.Message{"operation-id": int64(42), "name": "my-snap"}
@@ -187,7 +198,7 @@ func TestRunner_PanicSendsFailed(t *testing.T) {
 	h := newFakeHandler("reboot")
 	h.panic_ = true
 
-	runner := NewRunner([]Handler{h}, source, sink)
+	runner := NewRunner([]Handler{h}, source, sink, 100)
 	runner.Register()
 
 	msg := exchange.Message{"operation-id": int64(99)}
@@ -232,7 +243,7 @@ func TestRunner_HandlerErrorLogged(t *testing.T) {
 	h := newFakeHandler("remove-snaps")
 	h.err = errors.New("something went wrong")
 
-	runner := NewRunner([]Handler{h}, source, sink)
+	runner := NewRunner([]Handler{h}, source, sink, 100)
 	runner.Register()
 
 	msg := exchange.Message{"operation-id": int64(7)}
@@ -243,15 +254,7 @@ func TestRunner_HandlerErrorLogged(t *testing.T) {
 	if !ok {
 		t.Fatal("handler was not called within timeout")
 	}
-
-	// Give the goroutine a moment to log after returning from Handle.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if strings.Contains(buf.String(), "something went wrong") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	runner.Wait()
 
 	logOutput := buf.String()
 	if !strings.Contains(logOutput, "something went wrong") {
@@ -259,4 +262,155 @@ func TestRunner_HandlerErrorLogged(t *testing.T) {
 	}
 	// Runner should still be functioning (no crash), verify via fmt to avoid unused import.
 	_ = fmt.Sprintf("runner ok")
+}
+
+func TestRunner_WaitTracksMultipleInFlightHandlers(t *testing.T) {
+	source := newMockCommandSource()
+	sink := &mockResultSink{}
+
+	block1 := make(chan struct{})
+	block2 := make(chan struct{})
+
+	h1 := newFakeHandler("install-snaps")
+	h1.block = block1
+	h1.started = make(chan struct{}, 1)
+
+	h2 := newFakeHandler("remove-snaps")
+	h2.block = block2
+	h2.started = make(chan struct{}, 1)
+
+	runner := NewRunner([]Handler{h1, h2}, source, sink)
+	runner.Register()
+
+	source.Dispatch(context.Background(), "install-snaps", exchange.Message{"operation-id": int64(1)})
+	source.Dispatch(context.Background(), "remove-snaps", exchange.Message{"operation-id": int64(2)})
+
+	if _, ok := waitChan(h1.started, 2*time.Second); !ok {
+		t.Fatal("handler 1 did not start")
+	}
+	if _, ok := waitChan(h2.started, 2*time.Second); !ok {
+		t.Fatal("handler 2 did not start")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		runner.Wait()
+		close(done)
+	}()
+
+	close(block1)
+	select {
+	case <-done:
+		t.Fatal("Wait returned before all handlers completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(block2)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not return after all handlers completed")
+	}
+}
+
+func TestRunner_WaitBlocksUntilHandlerCompletes(t *testing.T) {
+	source := newMockCommandSource()
+	sink := &mockResultSink{}
+
+	block := make(chan struct{})
+	h := newFakeHandler("install-snaps")
+	h.block = block
+	h.started = make(chan struct{}, 1)
+
+	runner := NewRunner([]Handler{h}, source, sink)
+	runner.Register()
+
+	source.Dispatch(context.Background(), "install-snaps", exchange.Message{"operation-id": int64(3)})
+
+	if _, ok := waitChan(h.started, 2*time.Second); !ok {
+		t.Fatal("handler did not start")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		runner.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("Wait returned while handler was still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(block)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not return after handler completion")
+	}
+}
+
+func TestRunner_WaitWithTimeoutReturnsError(t *testing.T) {
+	source := newMockCommandSource()
+	sink := &mockResultSink{}
+
+	block := make(chan struct{})
+	h := newFakeHandler("refresh-snap")
+	h.block = block
+	h.started = make(chan struct{}, 1)
+
+	runner := NewRunner([]Handler{h}, source, sink)
+	runner.Register()
+
+	source.Dispatch(context.Background(), "refresh-snap", exchange.Message{"operation-id": int64(4)})
+
+	if _, ok := waitChan(h.started, 2*time.Second); !ok {
+		t.Fatal("handler did not start")
+	}
+
+	err := runner.WaitWithTimeout(100 * time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
+
+	close(block)
+	runner.Wait()
+}
+
+func TestRunner_WaitWithTimeoutReturnsNilAfterCompletion(t *testing.T) {
+	source := newMockCommandSource()
+	sink := &mockResultSink{}
+
+	h := newFakeHandler("restart-service")
+	runner := NewRunner([]Handler{h}, source, sink)
+	runner.Register()
+
+	source.Dispatch(context.Background(), "restart-service", exchange.Message{"operation-id": int64(5)})
+
+	err := runner.WaitWithTimeout(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestRunner_WaitWithTimeoutHandlesPanickingHandler(t *testing.T) {
+	source := newMockCommandSource()
+	sink := &mockResultSink{}
+
+	h := newFakeHandler("shutdown")
+	h.panic_ = true
+
+	runner := NewRunner([]Handler{h}, source, sink)
+	runner.Register()
+
+	source.Dispatch(context.Background(), "shutdown", exchange.Message{"operation-id": int64(6)})
+
+	err := runner.WaitWithTimeout(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected nil error after panic recovery, got %v", err)
+	}
 }

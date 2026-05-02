@@ -5,7 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -669,4 +671,88 @@ func TestExchange_SendResultCode(t *testing.T) {
 
 	cancel() // stop the exchange loop
 	<-done   // wait for Run to return
+}
+
+func TestPerformExchange_HandlerPanicReturnsError(t *testing.T) {
+	ts := newTestSetup(t)
+	state := ts.freshState(t)
+	state.SecureID = "sec123"
+
+	ts.ex.Subscribe("boom", func(ctx context.Context, msg Message) {
+		panic("boom")
+	})
+
+	ts.fs.push(map[string]any{
+		"messages": []any{
+			map[string]any{"type": "boom"},
+		},
+		"next-expected-sequence": int64(0),
+	})
+
+	err := ts.ex.performExchange(context.Background(), state)
+	if err == nil {
+		t.Fatal("expected handler panic error, got nil")
+	}
+	if !strings.Contains(err.Error(), "handler panic") {
+		t.Fatalf("expected handler panic in error, got: %v", err)
+	}
+}
+
+func TestPerformExchange_AllHandlerGoroutinesComplete(t *testing.T) {
+	ts := newTestSetup(t)
+	state := ts.freshState(t)
+	state.SecureID = "sec123"
+
+	var completed int32
+	ts.ex.Subscribe("fanout", func(ctx context.Context, msg Message) {
+		time.Sleep(20 * time.Millisecond)
+		atomic.AddInt32(&completed, 1)
+	})
+	ts.ex.Subscribe("fanout", func(ctx context.Context, msg Message) {
+		time.Sleep(10 * time.Millisecond)
+		atomic.AddInt32(&completed, 1)
+	})
+
+	ts.fs.push(map[string]any{
+		"messages": []any{
+			map[string]any{"type": "fanout"},
+		},
+		"next-expected-sequence": int64(0),
+	})
+
+	if err := ts.ex.performExchange(context.Background(), state); err != nil {
+		t.Fatalf("performExchange: %v", err)
+	}
+	if got := atomic.LoadInt32(&completed); got != 2 {
+		t.Fatalf("expected all handler goroutines to complete, got %d", got)
+	}
+}
+
+func TestPerformExchange_HandlerContextCancellationPropagates(t *testing.T) {
+	ts := newTestSetup(t)
+	state := ts.freshState(t)
+	state.SecureID = "sec123"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ts.ex.Subscribe("cancel-me", func(handlerCtx context.Context, msg Message) {
+		cancel()
+		<-handlerCtx.Done()
+	})
+
+	ts.fs.push(map[string]any{
+		"messages": []any{
+			map[string]any{"type": "cancel-me"},
+		},
+		"next-expected-sequence": int64(0),
+	})
+
+	err := ts.ex.performExchange(ctx, state)
+	if err == nil {
+		t.Fatal("expected context cancellation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("expected context canceled in error, got: %v", err)
+	}
 }

@@ -105,6 +105,11 @@ func getSnaps(msg exchange.Message) ([]map[string]any, error) {
 type InstallSnapHandler struct {
 	Snapd      snapd.Client
 	OnComplete func() // called after all snaps have been processed; may be nil
+	opCtxMgr   *OperationContextManager
+}
+
+func (h *InstallSnapHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
+	h.opCtxMgr = opCtxMgr
 }
 
 func (h *InstallSnapHandler) MessageType() string { return "install-snaps" }
@@ -114,6 +119,14 @@ func (h *InstallSnapHandler) Handle(ctx context.Context, msg exchange.Message, r
 	if err != nil {
 		return err
 	}
+
+	operationCtx, cancelOperation := context.WithCancel(ctx)
+	defer cancelOperation()
+	if h.opCtxMgr != nil {
+		h.opCtxMgr.Register(opID, cancelOperation)
+		defer h.opCtxMgr.Cleanup(opID)
+	}
+
 	snaps, err := getSnaps(msg)
 	if err != nil {
 		reportResult(ctx, result, opID, err)
@@ -132,12 +145,12 @@ func (h *InstallSnapHandler) Handle(ctx context.Context, msg exchange.Message, r
 			channel, _ = args["channel"].(string)
 			classic, _ = args["classic"].(bool)
 		}
-		changeID, err := h.Snapd.InstallSnap(ctx, name, snapd.InstallOptions{Channel: channel, Classic: classic})
+		changeID, err := h.Snapd.InstallSnap(operationCtx, name, snapd.InstallOptions{Channel: channel, Classic: classic})
 		if err != nil {
 			reportResult(ctx, result, opID, err)
 			return nil
 		}
-		waitCtx, cancel := context.WithTimeout(ctx, changeTimeout)
+		waitCtx, cancel := context.WithTimeout(operationCtx, changeTimeout)
 		err = h.Snapd.WaitForChange(waitCtx, changeID)
 		cancel()
 		if err != nil {
@@ -156,6 +169,11 @@ func (h *InstallSnapHandler) Handle(ctx context.Context, msg exchange.Message, r
 type RemoveSnapHandler struct {
 	Snapd      snapd.Client
 	OnComplete func() // called after all snaps have been processed; may be nil
+	opCtxMgr   *OperationContextManager
+}
+
+func (h *RemoveSnapHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
+	h.opCtxMgr = opCtxMgr
 }
 
 func (h *RemoveSnapHandler) MessageType() string { return "remove-snaps" }
@@ -165,6 +183,14 @@ func (h *RemoveSnapHandler) Handle(ctx context.Context, msg exchange.Message, re
 	if err != nil {
 		return err
 	}
+
+	operationCtx, cancelOperation := context.WithCancel(ctx)
+	defer cancelOperation()
+	if h.opCtxMgr != nil {
+		h.opCtxMgr.Register(opID, cancelOperation)
+		defer h.opCtxMgr.Cleanup(opID)
+	}
+
 	snaps, err := getSnaps(msg)
 	if err != nil {
 		reportResult(ctx, result, opID, err)
@@ -176,12 +202,12 @@ func (h *RemoveSnapHandler) Handle(ctx context.Context, msg exchange.Message, re
 			reportResult(ctx, result, opID, fmt.Errorf("manager: snap entry missing \"name\" field"))
 			return nil
 		}
-		changeID, err := h.Snapd.RemoveSnap(ctx, name)
+		changeID, err := h.Snapd.RemoveSnap(operationCtx, name)
 		if err != nil {
 			reportResult(ctx, result, opID, err)
 			return nil
 		}
-		waitCtx, cancel := context.WithTimeout(ctx, changeTimeout)
+		waitCtx, cancel := context.WithTimeout(operationCtx, changeTimeout)
 		err = h.Snapd.WaitForChange(waitCtx, changeID)
 		cancel()
 		if err != nil {
@@ -200,6 +226,11 @@ func (h *RemoveSnapHandler) Handle(ctx context.Context, msg exchange.Message, re
 type RefreshSnapHandler struct {
 	Snapd      snapd.Client
 	OnComplete func() // called after all snaps have been processed; may be nil
+	opCtxMgr   *OperationContextManager
+}
+
+func (h *RefreshSnapHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
+	h.opCtxMgr = opCtxMgr
 }
 
 func (h *RefreshSnapHandler) MessageType() string { return "refresh-snaps" }
@@ -209,6 +240,14 @@ func (h *RefreshSnapHandler) Handle(ctx context.Context, msg exchange.Message, r
 	if err != nil {
 		return err
 	}
+
+	operationCtx, cancelOperation := context.WithCancel(ctx)
+	defer cancelOperation()
+	if h.opCtxMgr != nil {
+		h.opCtxMgr.Register(opID, cancelOperation)
+		defer h.opCtxMgr.Cleanup(opID)
+	}
+
 	snaps, err := getSnaps(msg)
 	if err != nil {
 		reportResult(ctx, result, opID, err)
@@ -220,12 +259,12 @@ func (h *RefreshSnapHandler) Handle(ctx context.Context, msg exchange.Message, r
 			reportResult(ctx, result, opID, fmt.Errorf("manager: snap entry missing \"name\" field"))
 			return nil
 		}
-		changeID, err := h.Snapd.RefreshSnap(ctx, name)
+		changeID, err := h.Snapd.RefreshSnap(operationCtx, name)
 		if err != nil {
 			reportResult(ctx, result, opID, err)
 			return nil
 		}
-		waitCtx, cancel := context.WithTimeout(ctx, changeTimeout)
+		waitCtx, cancel := context.WithTimeout(operationCtx, changeTimeout)
 		err = h.Snapd.WaitForChange(waitCtx, changeID)
 		cancel()
 		if err != nil {
@@ -242,7 +281,12 @@ func (h *RefreshSnapHandler) Handle(ctx context.Context, msg exchange.Message, r
 
 // StartServiceHandler handles "start-snap-service" commands.
 type StartServiceHandler struct {
-	Snapd snapd.Client
+	Snapd    snapd.Client
+	opCtxMgr *OperationContextManager
+}
+
+func (h *StartServiceHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
+	h.opCtxMgr = opCtxMgr
 }
 
 func (h *StartServiceHandler) MessageType() string { return "start-snap-service" }
@@ -261,13 +305,25 @@ func (h *StartServiceHandler) Handle(ctx context.Context, msg exchange.Message, 
 		return err
 	}
 
-	reportResult(ctx, result, opID, h.Snapd.StartService(ctx, snapName, service))
+	operationCtx, cancelOperation := context.WithCancel(ctx)
+	defer cancelOperation()
+	if h.opCtxMgr != nil {
+		h.opCtxMgr.Register(opID, cancelOperation)
+		defer h.opCtxMgr.Cleanup(opID)
+	}
+
+	reportResult(ctx, result, opID, h.Snapd.StartService(operationCtx, snapName, service))
 	return nil
 }
 
 // StopServiceHandler handles "stop-snap-service" commands.
 type StopServiceHandler struct {
-	Snapd snapd.Client
+	Snapd    snapd.Client
+	opCtxMgr *OperationContextManager
+}
+
+func (h *StopServiceHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
+	h.opCtxMgr = opCtxMgr
 }
 
 func (h *StopServiceHandler) MessageType() string { return "stop-snap-service" }
@@ -286,13 +342,25 @@ func (h *StopServiceHandler) Handle(ctx context.Context, msg exchange.Message, r
 		return err
 	}
 
-	reportResult(ctx, result, opID, h.Snapd.StopService(ctx, snapName, service))
+	operationCtx, cancelOperation := context.WithCancel(ctx)
+	defer cancelOperation()
+	if h.opCtxMgr != nil {
+		h.opCtxMgr.Register(opID, cancelOperation)
+		defer h.opCtxMgr.Cleanup(opID)
+	}
+
+	reportResult(ctx, result, opID, h.Snapd.StopService(operationCtx, snapName, service))
 	return nil
 }
 
 // RestartServiceHandler handles "restart-snap-service" commands.
 type RestartServiceHandler struct {
-	Snapd snapd.Client
+	Snapd    snapd.Client
+	opCtxMgr *OperationContextManager
+}
+
+func (h *RestartServiceHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
+	h.opCtxMgr = opCtxMgr
 }
 
 func (h *RestartServiceHandler) MessageType() string { return "restart-snap-service" }
@@ -311,6 +379,13 @@ func (h *RestartServiceHandler) Handle(ctx context.Context, msg exchange.Message
 		return err
 	}
 
-	reportResult(ctx, result, opID, h.Snapd.RestartService(ctx, snapName, service))
+	operationCtx, cancelOperation := context.WithCancel(ctx)
+	defer cancelOperation()
+	if h.opCtxMgr != nil {
+		h.opCtxMgr.Register(opID, cancelOperation)
+		defer h.opCtxMgr.Cleanup(opID)
+	}
+
+	reportResult(ctx, result, opID, h.Snapd.RestartService(operationCtx, snapName, service))
 	return nil
 }

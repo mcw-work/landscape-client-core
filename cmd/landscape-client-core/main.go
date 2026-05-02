@@ -12,7 +12,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -25,10 +24,12 @@ import (
 	"github.com/canonical/landscape-client-core/internal/snapd"
 	"github.com/canonical/landscape-client-core/internal/transport"
 	"github.com/canonical/landscape-client-core/internal/version"
+	"golang.org/x/sync/errgroup"
 )
 
 func main() {
 	validateOnly := flag.Bool("validate-config", false, "Validate configuration and exit")
+	handlerConcurrency := flag.Int("handler-concurrency", 100, "Maximum number of concurrent handler executions")
 	flag.Parse()
 
 	// Handle --validate-config before daemon startup.
@@ -125,7 +126,7 @@ func main() {
 		manager.NewShutdownHandler(),
 		manager.NewScriptExecHandler(snapCommon, transport.NewAttachmentFetcher(tc, cfg.URL, store)),
 	}
-	mgRunner := manager.NewRunner(handlers, exc, exc)
+	mgRunner := manager.NewRunner(handlers, exc, exc, *handlerConcurrency)
 	mgRunner.Register()
 
 	// Create ping loop. The Pinger periodically POSTs to the ping server and
@@ -153,40 +154,69 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
-	// Run goroutines.
-	var wg sync.WaitGroup
-	wg.Add(3)
-	go func() {
-		defer wg.Done()
-		if err := exc.Run(ctx); err != nil {
-			log.Printf("exchange: %v", err)
+	// Run goroutines under a shared errgroup context.
+	eg, groupCtx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		err := exc.Run(groupCtx)
+		if err != nil {
+			log.Printf("exchange: run failed: %v", err)
+			return fmt.Errorf("exchange runner: %w", err)
 		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := monRunner.Run(ctx); err != nil {
-			log.Printf("monitor: %v", err)
+		if groupCtx.Err() != nil {
+			log.Printf("exchange: stopped due to context cancellation: %v", groupCtx.Err())
 		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := pinger.Run(ctx); err != nil {
-			log.Printf("ping: %v", err)
+		return nil
+	})
+	eg.Go(func() error {
+		err := monRunner.Run(groupCtx)
+		if err != nil {
+			log.Printf("monitor: run failed: %v", err)
+			return fmt.Errorf("monitor runner: %w", err)
 		}
+		if groupCtx.Err() != nil {
+			log.Printf("monitor: stopped due to context cancellation: %v", groupCtx.Err())
+		}
+		return nil
+	})
+	eg.Go(func() error {
+		err := pinger.Run(groupCtx)
+		if err != nil {
+			log.Printf("ping: run failed: %v", err)
+			return fmt.Errorf("ping runner: %w", err)
+		}
+		if groupCtx.Err() != nil {
+			log.Printf("ping: stopped due to context cancellation: %v", groupCtx.Err())
+		}
+		return nil
+	})
+
+	groupDone := make(chan error, 1)
+	go func() {
+		groupDone <- eg.Wait()
 	}()
 
-	// Wait for shutdown signal.
-	<-ctx.Done()
-	log.Println("landscape-client-core: shutting down")
+	// Wait for shutdown signal or the first runner error.
+	select {
+	case <-ctx.Done():
+		log.Println("landscape-client-core: shutting down")
+	case err := <-groupDone:
+		if err != nil {
+			log.Printf("landscape-client-core: first runner error: %v", err)
+		}
+		cancel()
+		log.Println("landscape-client-core: shutting down")
+	}
+
+	if err := mgRunner.WaitWithTimeout(5 * time.Second); err != nil {
+		log.Printf("landscape-client-core: %v", err)
+	}
 
 	// Wait up to 5s for goroutines to finish.
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
 	select {
-	case <-done:
+	case err := <-groupDone:
+		if err != nil {
+			log.Printf("landscape-client-core: runner group exited with error: %v", err)
+		}
 	case <-time.After(5 * time.Second):
 		log.Println("landscape-client-core: shutdown timeout, exiting")
 	}
