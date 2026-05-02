@@ -178,6 +178,9 @@ func main() {
 	// Wait for shutdown signal.
 	<-ctx.Done()
 	log.Println("landscape-client-core: shutting down")
+	if err := mgRunner.WaitWithTimeout(5 * time.Second); err != nil {
+		log.Printf("landscape-client-core: %v", err)
+	}
 
 	// Wait up to 5s for goroutines to finish.
 	done := make(chan struct{})
