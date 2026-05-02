@@ -14,16 +14,31 @@ type Runner struct {
 	handlers []Handler
 	source   exchange.CommandSource
 	result   exchange.ResultSink
+	opCtxMgr *OperationContextManager
+}
+
+type operationContextAware interface {
+	SetOperationContextManager(*OperationContextManager)
 }
 
 // NewRunner constructs a Runner that will dispatch messages from source to
 // handlers and send results via result.
 func NewRunner(handlers []Handler, source exchange.CommandSource, result exchange.ResultSink) *Runner {
-	return &Runner{
+	opCtxMgr := NewOperationContextManager()
+	r := &Runner{
 		handlers: handlers,
 		source:   source,
 		result:   result,
+		opCtxMgr: opCtxMgr,
 	}
+
+	for _, h := range handlers {
+		if aware, ok := h.(operationContextAware); ok {
+			aware.SetOperationContextManager(opCtxMgr)
+		}
+	}
+
+	return r
 }
 
 // Register subscribes each handler to its message type on the CommandSource.
