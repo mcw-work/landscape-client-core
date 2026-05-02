@@ -25,14 +25,16 @@ type operationContextAware interface {
 // handlers and send results via result.
 func NewRunner(handlers []Handler, source exchange.CommandSource, result exchange.ResultSink) *Runner {
 	opCtxMgr := NewOperationContextManager()
+	allHandlers := append([]Handler{}, handlers...)
+	allHandlers = append(allHandlers, NewCancelHandler(opCtxMgr))
 	r := &Runner{
-		handlers: handlers,
+		handlers: allHandlers,
 		source:   source,
 		result:   result,
 		opCtxMgr: opCtxMgr,
 	}
 
-	for _, h := range handlers {
+	for _, h := range allHandlers {
 		if aware, ok := h.(operationContextAware); ok {
 			aware.SetOperationContextManager(opCtxMgr)
 		}
