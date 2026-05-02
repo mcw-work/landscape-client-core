@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
 )
@@ -14,6 +15,7 @@ type Runner struct {
 	handlers []Handler
 	source   exchange.CommandSource
 	result   exchange.ResultSink
+	wg       sync.WaitGroup
 }
 
 // NewRunner constructs a Runner that will dispatch messages from source to
