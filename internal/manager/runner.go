@@ -35,7 +35,9 @@ func (r *Runner) Register() {
 	for _, h := range r.handlers {
 		handler := h // capture loop variable
 		r.source.Subscribe(handler.MessageType(), func(ctx context.Context, msg exchange.Message) {
+			r.wg.Add(1)
 			go func() {
+				defer r.wg.Done()
 				defer func() {
 					if rec := recover(); rec != nil {
 						opID, _ := msg["operation-id"].(int64)
