@@ -56,6 +56,8 @@ type Exchange struct {
 	store     *persist.Store
 	transport *transport.Client
 
+	// Kept as a mutex because pending queue, handler map, and insecureID require
+	// coordinated read/write access across goroutines; see docs/concurrency.md.
 	mu         sync.Mutex
 	pending    []Message
 	handlers   map[string][]func(ctx context.Context, msg Message)

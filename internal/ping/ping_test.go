@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -193,5 +194,60 @@ func TestPinger_DoPing_FormValues(t *testing.T) {
 
 	if got := gotValues.Get("insecure_id"); got != "special-id-123" {
 		t.Errorf("insecure_id: want %q, got %q", "special-id-123", got)
+	}
+}
+
+func TestPinger_IntervalConcurrentAccess(t *testing.T) {
+	p := New("", func() string { return "" }, func() {}, 10*time.Millisecond, newTransport(t))
+
+	durations := []time.Duration{
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+	}
+
+	const readers = 8
+	const writers = 4
+	const iterations = 500
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	var sawValue atomic.Bool
+
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(offset int) {
+			defer wg.Done()
+			<-start
+			for j := 0; j < iterations; j++ {
+				p.SetInterval(durations[(j+offset)%len(durations)])
+			}
+		}(i)
+	}
+
+	for i := 0; i < readers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for j := 0; j < iterations; j++ {
+				got := p.GetInterval()
+				for _, want := range durations {
+					if got == want {
+						sawValue.Store(true)
+						break
+					}
+				}
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	if !sawValue.Load() {
+		t.Fatal("expected concurrent readers to observe a valid configured interval")
 	}
 }
