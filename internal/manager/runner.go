@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
 )
@@ -50,5 +51,27 @@ func (r *Runner) Register() {
 				}
 			}()
 		})
+	}
+}
+
+// Wait blocks until all in-flight handler goroutines have completed.
+func (r *Runner) Wait() {
+	r.wg.Wait()
+}
+
+// WaitWithTimeout blocks until all in-flight handler goroutines complete or
+// the timeout is reached.
+func (r *Runner) WaitWithTimeout(timeout time.Duration) error {
+	done := make(chan struct{})
+	go func() {
+		r.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("manager: wait for handlers timed out after %s", timeout)
 	}
 }
