@@ -140,7 +140,7 @@ func TestRunner_AllHandlersRegistered(t *testing.T) {
 	h2 := newFakeHandler("remove-snaps")
 	h3 := newFakeHandler("reboot")
 
-	runner := NewRunner([]Handler{h1, h2, h3}, source, sink)
+	runner := NewRunner([]Handler{h1, h2, h3}, source, sink, 100)
 	runner.Register()
 
 	subscribed := source.subscribedTypes()
@@ -163,7 +163,7 @@ func TestRunner_InboundMessageDispatched(t *testing.T) {
 	sink := &mockResultSink{}
 
 	h := newFakeHandler("install-snaps")
-	runner := NewRunner([]Handler{h}, source, sink)
+	runner := NewRunner([]Handler{h}, source, sink, 100)
 	runner.Register()
 
 	msg := exchange.Message{"operation-id": int64(42), "name": "my-snap"}
@@ -187,7 +187,7 @@ func TestRunner_PanicSendsFailed(t *testing.T) {
 	h := newFakeHandler("reboot")
 	h.panic_ = true
 
-	runner := NewRunner([]Handler{h}, source, sink)
+	runner := NewRunner([]Handler{h}, source, sink, 100)
 	runner.Register()
 
 	msg := exchange.Message{"operation-id": int64(99)}
@@ -232,7 +232,7 @@ func TestRunner_HandlerErrorLogged(t *testing.T) {
 	h := newFakeHandler("remove-snaps")
 	h.err = errors.New("something went wrong")
 
-	runner := NewRunner([]Handler{h}, source, sink)
+	runner := NewRunner([]Handler{h}, source, sink, 100)
 	runner.Register()
 
 	msg := exchange.Message{"operation-id": int64(7)}

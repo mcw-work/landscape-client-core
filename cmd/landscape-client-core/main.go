@@ -29,6 +29,7 @@ import (
 
 func main() {
 	validateOnly := flag.Bool("validate-config", false, "Validate configuration and exit")
+	handlerConcurrency := flag.Int("handler-concurrency", 100, "Maximum number of concurrent handler executions")
 	flag.Parse()
 
 	// Handle --validate-config before daemon startup.
@@ -125,7 +126,7 @@ func main() {
 		manager.NewShutdownHandler(),
 		manager.NewScriptExecHandler(snapCommon, transport.NewAttachmentFetcher(tc, cfg.URL, store)),
 	}
-	mgRunner := manager.NewRunner(handlers, exc, exc)
+	mgRunner := manager.NewRunner(handlers, exc, exc, *handlerConcurrency)
 	mgRunner.Register()
 
 	// Create ping loop. The Pinger periodically POSTs to the ping server and
