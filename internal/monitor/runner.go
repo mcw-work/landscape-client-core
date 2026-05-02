@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"log"
 	"runtime/debug"
-	"sync"
 	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
 	"github.com/canonical/landscape-client-core/internal/persist"
+	"golang.org/x/sync/errgroup"
 )
 
 // Runner manages a set of monitor plugins, running each in its own goroutine
@@ -41,15 +41,20 @@ func New(plugins []Plugin, sink exchange.MessageSink, store *persist.Store) *Run
 // Run starts one goroutine per plugin and blocks until all goroutines have
 // exited. It always returns nil.
 func (r *Runner) Run(ctx context.Context) error {
-	var wg sync.WaitGroup
+	eg, egCtx := errgroup.WithContext(ctx)
 	for _, p := range r.plugins {
-		wg.Add(1)
-		go func(plugin Plugin) {
-			defer wg.Done()
-			r.runPlugin(ctx, plugin)
-		}(p)
+		plugin := p
+		eg.Go(func() error {
+			r.runPlugin(egCtx, plugin)
+			if err := egCtx.Err(); err != nil {
+				return fmt.Errorf("plugin %s stopped: %w", plugin.Name(), err)
+			}
+			return nil
+		})
 	}
-	wg.Wait()
+	if err := eg.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+		log.Printf("monitor: runner group error: %v", err)
+	}
 	return nil
 }
 
