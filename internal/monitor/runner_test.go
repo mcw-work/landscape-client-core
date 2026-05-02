@@ -20,6 +20,23 @@ type fakePlugin struct {
 	runFunc func(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error
 }
 
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func (f *fakePlugin) Name() string { return f.name }
 func (f *fakePlugin) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	return f.runFunc(ctx, sink, state)
@@ -223,7 +240,7 @@ func TestRunner_LogsPluginRunError(t *testing.T) {
 	sink := &mockSink{}
 	var calls int32
 
-	var logs bytes.Buffer
+	var logs lockedBuffer
 	oldWriter := log.Writer()
 	oldFlags := log.Flags()
 	log.SetOutput(&logs)

@@ -254,15 +254,7 @@ func TestRunner_HandlerErrorLogged(t *testing.T) {
 	if !ok {
 		t.Fatal("handler was not called within timeout")
 	}
-
-	// Give the goroutine a moment to log after returning from Handle.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if strings.Contains(buf.String(), "something went wrong") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	runner.Wait()
 
 	logOutput := buf.String()
 	if !strings.Contains(logOutput, "something went wrong") {
