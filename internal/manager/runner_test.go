@@ -155,11 +155,11 @@ func TestRunner_AllHandlersRegistered(t *testing.T) {
 	runner.Register()
 
 	subscribed := source.subscribedTypes()
-	if len(subscribed) != 3 {
-		t.Fatalf("expected 3 subscriptions, got %d: %v", len(subscribed), subscribed)
+	if len(subscribed) != 4 {
+		t.Fatalf("expected 4 subscriptions, got %d: %v", len(subscribed), subscribed)
 	}
 
-	want := map[string]bool{"install-snaps": true, "remove-snaps": true, "reboot": true}
+	want := map[string]bool{"install-snaps": true, "remove-snaps": true, "reboot": true, "cancel-operation": true}
 	for _, typ := range subscribed {
 		if !want[typ] {
 			t.Errorf("unexpected subscription: %q", typ)
