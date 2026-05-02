@@ -110,3 +110,69 @@ func TestScriptExecHandler_OperationCancellation(t *testing.T) {
 		t.Fatalf("status = %d, want %d", res.status, exchange.StatusFailed)
 	}
 }
+
+func TestCancelHandler_CancelsRegisteredOperation(t *testing.T) {
+	mgr := NewOperationContextManager()
+	h := NewCancelHandler(mgr)
+
+	cancelled := make(chan struct{}, 1)
+	mgr.Register(7001, func() {
+		cancelled <- struct{}{}
+	})
+
+	err := h.Handle(context.Background(), exchange.Message{"operation-id": int64(7001)}, &mockResultSink{})
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+
+	select {
+	case <-cancelled:
+	case <-time.After(1 * time.Second):
+		t.Fatal("cancel-operation did not invoke cancel func")
+	}
+}
+
+func TestCancelHandler_RunnerIntegration_CancelsScriptExecution(t *testing.T) {
+	source := newMockCommandSource()
+	sink := &mockResultSink{}
+	scriptHandler := NewScriptExecHandler(t.TempDir(), nil)
+
+	runner := NewRunner([]Handler{scriptHandler}, source, sink)
+	runner.Register()
+
+	opID := int64(7002)
+
+	source.Dispatch(context.Background(), "execute-script", exchange.Message{
+		"operation-id": opID,
+		"code":         "while true; do :; done",
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		runner.opCtxMgr.mu.Lock()
+		_, ok := runner.opCtxMgr.operations[opID]
+		runner.opCtxMgr.mu.Unlock()
+		if ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	source.Dispatch(context.Background(), "cancel-operation", exchange.Message{"operation-id": opID})
+
+	resultDeadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(resultDeadline) {
+		if res, ok := sink.first(); ok {
+			if res.opID != opID {
+				t.Fatalf("opID = %d, want %d", res.opID, opID)
+			}
+			if res.status != exchange.StatusFailed {
+				t.Fatalf("status = %d, want %d", res.status, exchange.StatusFailed)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatal("no result received after cancel-operation message")
+}
