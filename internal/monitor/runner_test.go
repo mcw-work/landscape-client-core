@@ -338,3 +338,48 @@ func TestRunner_BackoffResetsAfterHealthyRunWindow(t *testing.T) {
 
 	cancel()
 }
+
+func TestRunner_ErrgroupContextCancellationPropagatesToAllPlugins(t *testing.T) {
+	var exits int32
+	plugins := []Plugin{
+		&fakePlugin{name: "p1", runFunc: func(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
+			<-ctx.Done()
+			atomic.AddInt32(&exits, 1)
+			return ctx.Err()
+		}},
+		&fakePlugin{name: "p2", runFunc: func(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
+			<-ctx.Done()
+			atomic.AddInt32(&exits, 1)
+			return ctx.Err()
+		}},
+		&fakePlugin{name: "p3", runFunc: func(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
+			<-ctx.Done()
+			atomic.AddInt32(&exits, 1)
+			return ctx.Err()
+		}},
+	}
+
+	store := newStore(t)
+	sink := &mockSink{}
+	runner := New(plugins, sink, store)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() {
+		runner.Run(ctx) //nolint:errcheck
+		close(runDone)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-runDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return after cancellation")
+	}
+
+	if got := atomic.LoadInt32(&exits); got != 3 {
+		t.Fatalf("expected all plugins to observe cancellation, got %d", got)
+	}
+}
