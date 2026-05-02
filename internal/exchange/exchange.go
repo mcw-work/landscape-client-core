@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -492,7 +493,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 				handlerEG.Go(func() (handlerErr error) {
 					defer func() {
 						if rec := recover(); rec != nil {
-							log.Printf("exchange: handler panic type=%q: %v", msgType, rec)
+							log.Printf("exchange: handler panic type=%q: %v\n%s", msgType, rec, debug.Stack())
 							handlerErr = fmt.Errorf("handler panic for %q: %v", msgType, rec)
 						}
 					}()

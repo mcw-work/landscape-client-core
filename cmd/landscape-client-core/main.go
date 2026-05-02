@@ -161,6 +161,9 @@ func main() {
 			log.Printf("exchange: run failed: %v", err)
 			return fmt.Errorf("exchange runner: %w", err)
 		}
+		if groupCtx.Err() != nil {
+			log.Printf("exchange: stopped due to context cancellation: %v", groupCtx.Err())
+		}
 		return nil
 	})
 	eg.Go(func() error {
@@ -169,6 +172,9 @@ func main() {
 			log.Printf("monitor: run failed: %v", err)
 			return fmt.Errorf("monitor runner: %w", err)
 		}
+		if groupCtx.Err() != nil {
+			log.Printf("monitor: stopped due to context cancellation: %v", groupCtx.Err())
+		}
 		return nil
 	})
 	eg.Go(func() error {
@@ -176,6 +182,9 @@ func main() {
 		if err != nil {
 			log.Printf("ping: run failed: %v", err)
 			return fmt.Errorf("ping runner: %w", err)
+		}
+		if groupCtx.Err() != nil {
+			log.Printf("ping: stopped due to context cancellation: %v", groupCtx.Err())
 		}
 		return nil
 	})
