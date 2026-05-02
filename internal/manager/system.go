@@ -88,6 +88,8 @@ func (h *ShutdownHandler) Handle(ctx context.Context, msg exchange.Message, resu
 // once when the cap is reached, then silently discards all subsequent writes.
 // It is safe for concurrent use (stdout and stderr copy goroutines).
 type limitWriter struct {
+	// Kept as a mutex because stdout/stderr are copied concurrently and both the
+	// remaining byte budget and truncated flag must stay consistent; see docs/concurrency.md.
 	mu        sync.Mutex
 	w         io.Writer
 	n         int
