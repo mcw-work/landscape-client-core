@@ -29,9 +29,9 @@ The client is configured via `snap set`. Available keys:
 | `registration-key` | no | — | Registration key for the account |
 | `computer-title` | yes | — | Display name for this device |
 | `url` | yes | — | Landscape message system URL (e.g. `https://landscape.canonical.com/message-system`) |
-| `exchange-interval` | no | `15m` | Interval between regular exchanges |
-| `urgent-exchange-interval` | no | `1m` | Interval for urgent exchanges |
-| `ping-interval` | no | `30s` | Interval between ping messages |
+| `exchange-interval` | no | `900` | Interval between regular exchanges (in seconds) |
+| `urgent-exchange-interval` | no | `60` | Interval for urgent exchanges (in seconds) |
+| `ping-interval` | no | `30` | Interval between ping messages (in seconds) |
 | `ssl-public-key` | no | — | Path to CA certificate for SSL verification |
 | `http-proxy` | no | — | HTTP proxy URL |
 | `https-proxy` | no | — | HTTPS proxy URL |
