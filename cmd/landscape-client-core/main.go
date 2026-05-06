@@ -5,7 +5,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -82,7 +81,8 @@ func main() {
 		HTTPSProxy:   cfg.HTTPSProxy,
 	})
 	if err != nil {
-		log.Fatalf("transport: %v", err)
+		slog.Error("failed to create transport client", "error", err)
+		os.Exit(1)
 	}
 
 	// Create snapd client.
@@ -145,7 +145,7 @@ func main() {
 		if v, ok := msg["ping"]; ok {
 			if secs, ok := v.(int64); ok && secs > 0 {
 				pinger.SetInterval(time.Duration(secs) * time.Second)
-				log.Printf("ping: interval updated to %ds", secs)
+				slog.Info("ping interval updated", "seconds", secs)
 			}
 		}
 	})
@@ -159,33 +159,33 @@ func main() {
 	eg.Go(func() error {
 		err := exc.Run(groupCtx)
 		if err != nil {
-			log.Printf("exchange: run failed: %v", err)
+			slog.Error("exchange runner failed", "error", err)
 			return fmt.Errorf("exchange runner: %w", err)
 		}
 		if groupCtx.Err() != nil {
-			log.Printf("exchange: stopped due to context cancellation: %v", groupCtx.Err())
+			slog.Info("exchange stopped due to context cancellation", "error", groupCtx.Err())
 		}
 		return nil
 	})
 	eg.Go(func() error {
 		err := monRunner.Run(groupCtx)
 		if err != nil {
-			log.Printf("monitor: run failed: %v", err)
+			slog.Error("monitor runner failed", "error", err)
 			return fmt.Errorf("monitor runner: %w", err)
 		}
 		if groupCtx.Err() != nil {
-			log.Printf("monitor: stopped due to context cancellation: %v", groupCtx.Err())
+			slog.Info("monitor stopped due to context cancellation", "error", groupCtx.Err())
 		}
 		return nil
 	})
 	eg.Go(func() error {
 		err := pinger.Run(groupCtx)
 		if err != nil {
-			log.Printf("ping: run failed: %v", err)
+			slog.Error("ping runner failed", "error", err)
 			return fmt.Errorf("ping runner: %w", err)
 		}
 		if groupCtx.Err() != nil {
-			log.Printf("ping: stopped due to context cancellation: %v", groupCtx.Err())
+			slog.Info("ping stopped due to context cancellation", "error", groupCtx.Err())
 		}
 		return nil
 	})
@@ -198,27 +198,27 @@ func main() {
 	// Wait for shutdown signal or the first runner error.
 	select {
 	case <-ctx.Done():
-		log.Println("landscape-client-core: shutting down")
+		slog.Info("shutting down")
 	case err := <-groupDone:
 		if err != nil {
-			log.Printf("landscape-client-core: first runner error: %v", err)
+			slog.Error("first runner error", "error", err)
 		}
 		cancel()
-		log.Println("landscape-client-core: shutting down")
+		slog.Info("shutting down")
 	}
 
 	if err := mgRunner.WaitWithTimeout(5 * time.Second); err != nil {
-		log.Printf("landscape-client-core: %v", err)
+		slog.Error("error waiting for manager runner", "error", err)
 	}
 
 	// Wait up to 5s for goroutines to finish.
 	select {
 	case err := <-groupDone:
 		if err != nil {
-			log.Printf("landscape-client-core: runner group exited with error: %v", err)
+			slog.Error("runner group exited with error", "error", err)
 		}
 	case <-time.After(5 * time.Second):
-		log.Println("landscape-client-core: shutdown timeout, exiting")
+		slog.Warn("shutdown timeout, exiting")
 	}
 }
 
