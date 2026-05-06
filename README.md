@@ -26,7 +26,7 @@ The client is configured via `snap set`. Available keys:
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `account-name` | yes | — | Landscape account name |
-| `registration-key` | yes | — | Registration key for the account |
+| `registration-key` | no | — | Registration key for the account |
 | `computer-title` | yes | — | Display name for this device |
 | `url` | yes | — | Landscape message system URL (e.g. `https://landscape.canonical.com/message-system`) |
 | `exchange-interval` | no | `15m` | Interval between regular exchanges |
@@ -44,10 +44,11 @@ Example:
 ```
 sudo snap set landscape-client-core \
   account-name=my-account \
-  registration-key=my-key \
   computer-title="My Device" \
   url=https://landscape.canonical.com/message-system
 ```
+
+Note: `registration-key` is optional and only needed if the account requires explicit key authentication.
 
 Configuration is validated by the snap `configure` hook and stored under
 `$SNAP_COMMON`.
