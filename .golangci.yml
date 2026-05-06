@@ -5,4 +5,4 @@ linters:
     - govet
 
 run:
-  go: "1.22"
+  go: "1.25"

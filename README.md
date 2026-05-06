@@ -7,7 +7,7 @@ required).
 
 ## Requirements
 
-- Go 1.22 or later
+- Go 1.25 or later
 - Ubuntu Core 24 (target platform)
 
 ## Building
