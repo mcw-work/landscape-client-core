@@ -1,7 +1,9 @@
 package config_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -296,5 +298,56 @@ func TestValidateForHook_InvalidConfig(t *testing.T) {
 	m["url"] = "not-a-url" // missing scheme
 	if err := config.ValidateForHook(m); err == nil {
 		t.Fatal("expected error for invalid url, got nil")
+	}
+}
+
+func TestConfDBViewJSON_IncompleteConfig(t *testing.T) {
+	jsonText, ok, err := config.ConfDBViewJSON(MapLoader{
+		"url": "https://landscape.example.com/message-system",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected incomplete config to produce no confdb payload")
+	}
+	if jsonText != "" {
+		t.Fatalf("expected empty payload for incomplete config, got %q", jsonText)
+	}
+}
+
+func TestConfDBViewJSON_FullConfigPreservesTypes(t *testing.T) {
+	m := validRequired()
+	m["url"] = "https://landscape.example.com/message-system"
+	m["registration-key"] = "secret"
+	m["http-proxy"] = "http://proxy.example.com"
+	m["exchange-interval"] = "600"
+	m["ping-interval"] = "30"
+
+	jsonText, ok, err := config.ConfDBViewJSON(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected full config to produce confdb payload")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(jsonText), &got); err != nil {
+		t.Fatalf("payload is not valid JSON: %v", err)
+	}
+
+	want := map[string]any{
+		"account-name":      "my-account",
+		"computer-title":    "my-box",
+		"url":               "https://landscape.example.com/message-system",
+		"registration-key":  "secret",
+		"http-proxy":        "http://proxy.example.com",
+		"exchange-interval": float64(600),
+		"ping-interval":     float64(30),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected payload:\n got: %#v\nwant: %#v", got, want)
 	}
 }

@@ -1,3 +1,19 @@
 #!/bin/sh
 set -e
-/snap/landscape-client-core/current/bin/landscape-client-core --validate-config
+
+BIN=/snap/landscape-client-core/current/bin/landscape-client-core
+
+# 1. Validate. ValidateForHook tolerates fresh installs and in-progress wizard
+#    configuration; it only errors when all required keys are present but invalid.
+"$BIN" --validate-config
+
+# 2. Only publish to confdb once ALL required keys are present — never write
+#    partial configuration.
+# 3. Write the complete config object to confdb in one transaction. Do NOT fail the hook if the write is
+#    rejected (e.g. custodian plug not yet connected on a fresh install) —
+#    that would block `snap set`. Log and continue instead.
+if ! err="$("$BIN" --sync-confdb 2>&1)"; then
+    logger -t landscape-client-core.configure "confdb publish skipped: $err"
+fi
+
+exit 0

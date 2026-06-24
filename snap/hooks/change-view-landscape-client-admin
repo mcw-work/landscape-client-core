@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+# Custodian validation of any incoming write to the admin view, before commit.
+# A non-zero exit aborts the transaction.
+
+URL="$(snapctl get :landscape-client-admin --view config.url 2>/dev/null || true)"
+
+# Only enforce URL validation once a url is being set; partial wizard writes
+# (individual keys) are allowed through.
+if [ -n "$URL" ]; then
+    case "$URL" in
+        http://*|https://*) ;;
+        *)
+            logger -t landscape-client-core.change-view "rejecting invalid url: $URL"
+            echo "url must start with http:// or https://" >&2
+            exit 1
+            ;;
+    esac
+fi
+
+exit 0

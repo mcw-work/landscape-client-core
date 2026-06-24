@@ -28,6 +28,7 @@ import (
 
 func main() {
 	validateOnly := flag.Bool("validate-config", false, "Validate configuration and exit")
+	syncConfDB := flag.Bool("sync-confdb", false, "Publish validated snap config to the confdb admin view and exit")
 	handlerConcurrency := flag.Int("handler-concurrency", 100, "Maximum number of concurrent handler executions")
 	flag.Parse()
 
@@ -38,6 +39,14 @@ func main() {
 	if *validateOnly {
 		if err := config.ValidateForHook(&snapctlLoader{}); err != nil {
 			fmt.Fprintf(os.Stderr, "landscape-client-core: config error: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	if *syncConfDB {
+		if err := publishConfDB(&snapctlLoader{}); err != nil {
+			fmt.Fprintf(os.Stderr, "landscape-client-core: confdb sync error: %v\n", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -231,4 +240,24 @@ func (s *snapctlLoader) Get(key string) (string, error) {
 		return "", fmt.Errorf("snapctl get %s: %w", key, err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func publishConfDB(loader config.Loader) error {
+	payload, ok, err := config.ConfDBViewJSON(loader)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+
+	arg := "config=" + payload
+	cmd := exec.Command("snapctl", "set", ":landscape-client-admin", "--view", arg)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		if len(out) > 0 {
+			return fmt.Errorf("snapctl set :landscape-client-admin --view: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return fmt.Errorf("snapctl set :landscape-client-admin --view: %w", err)
+	}
+	return nil
 }

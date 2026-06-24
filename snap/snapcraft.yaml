@@ -13,7 +13,8 @@ license: GPL-3.0+
 donation: https://www.canonical.com/donate
 issues: https://www.canonical.com/issue
 source-code: https://www.github.com/canonical/
-website: https://www.canonical.com
+website: https://www.canonical.apps
+
 
 apps:
   landscape-client-core:
@@ -30,11 +31,24 @@ apps:
       - shutdown
       - log-observe
       - mount-observe
+      - landscape-client-state
 
   config:
     command: bin/landscape-client-core-config
     plugs:
       - network
+
+plugs:
+  landscape-client-admin:
+    interface: confdb
+    account: bpyPt7Qr2Qbui3MJMgyzZ3WaQkyj6OkU
+    view: landscape-client/client-admin
+    role: custodian
+  landscape-client-state:
+    interface: confdb
+    account: bpyPt7Qr2Qbui3MJMgyzZ3WaQkyj6OkU
+    view: landscape-client/client-state
+    role: custodian
 
 hooks:
   install: {}
@@ -42,6 +56,10 @@ hooks:
   configure:
     plugs:
       - network
+      - landscape-client-admin
+  change-view-landscape-client-admin:
+    plugs:
+      - landscape-client-admin
 
 parts:
   landscape-client-core:

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -183,4 +184,70 @@ func ValidateForHook(l Loader) error {
 	// All required keys are present — run full validation.
 	_, err := Load(l)
 	return err
+}
+
+// ConfDBViewJSON returns a JSON object suitable for a single confdb write to
+// the "config" request path. The boolean result reports whether all required
+// keys are present and a payload should be written.
+func ConfDBViewJSON(l Loader) (string, bool, error) {
+	requiredKeys := []string{"url", "account-name", "computer-title"}
+	for _, key := range requiredKeys {
+		value, err := l.Get(key)
+		if err != nil {
+			return "", false, fmt.Errorf("reading config key %q: %w", key, err)
+		}
+		if value == "" {
+			return "", false, nil
+		}
+	}
+
+	if _, err := Load(l); err != nil {
+		return "", false, err
+	}
+
+	payload := map[string]any{}
+	stringKeys := []string{
+		"url",
+		"account-name",
+		"computer-title",
+		"registration-key",
+		"ping-url",
+		"ssl-public-key",
+		"http-proxy",
+		"https-proxy",
+		"access-group",
+		"tags",
+		"log-level",
+	}
+	for _, key := range stringKeys {
+		value, err := l.Get(key)
+		if err != nil {
+			return "", false, fmt.Errorf("reading config key %q: %w", key, err)
+		}
+		if value != "" {
+			payload[key] = value
+		}
+	}
+
+	intKeys := []string{"exchange-interval", "urgent-exchange-interval", "ping-interval"}
+	for _, key := range intKeys {
+		value, err := l.Get(key)
+		if err != nil {
+			return "", false, fmt.Errorf("reading config key %q: %w", key, err)
+		}
+		if value == "" {
+			continue
+		}
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || seconds < 0 {
+			return "", false, fmt.Errorf("invalid duration for %q: must be a non-negative integer number of seconds", key)
+		}
+		payload[key] = seconds
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", false, fmt.Errorf("marshal confdb payload: %w", err)
+	}
+	return string(data), true, nil
 }
