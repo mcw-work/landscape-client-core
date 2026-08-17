@@ -144,7 +144,9 @@ func (p *ActiveProcessInfo) readBootTime() (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("opening proc/stat: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -272,7 +274,9 @@ func (p *ActiveProcessInfo) readStatusInto(pid int64, info *processInfo) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {

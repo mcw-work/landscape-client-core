@@ -94,12 +94,12 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	transport := &http.Transport{
-		TLSClientConfig:       tlsCfg,
-		Proxy:                 proxyFunc,
-		TLSHandshakeTimeout:   connectTimeout,
-		DialContext:           (&net.Dialer{Timeout: connectTimeout}).DialContext,
-		MaxIdleConnsPerHost:   1,
-		IdleConnTimeout:       90 * time.Second,
+		TLSClientConfig:     tlsCfg,
+		Proxy:               proxyFunc,
+		TLSHandshakeTimeout: connectTimeout,
+		DialContext:         (&net.Dialer{Timeout: connectTimeout}).DialContext,
+		MaxIdleConnsPerHost: 1,
+		IdleConnTimeout:     90 * time.Second,
 	}
 
 	httpClient := &http.Client{
@@ -138,7 +138,9 @@ func (c *Client) doRequest(ctx context.Context, method, rawURL string, inBody io
 	if err != nil {
 		return nil, fmt.Errorf("transport: sending request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		const maxErrBody = 4096
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))

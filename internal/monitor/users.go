@@ -106,7 +106,9 @@ func (p *UserMonitor) parsePasswd() (map[string]userRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", p.passwdPath, err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -162,7 +164,9 @@ func (p *UserMonitor) parseGroup(users map[string]userRecord) (map[string]groupR
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", p.groupPath, err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	userSet := make(map[string]bool)
 	for username := range users {

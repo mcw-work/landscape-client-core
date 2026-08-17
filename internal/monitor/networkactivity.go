@@ -86,7 +86,9 @@ func (p *NetworkActivity) readDev() (rx, tx map[string]int64, err error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening %s: %w", p.procNetDevPath, err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	rx = make(map[string]int64)
 	tx = make(map[string]int64)

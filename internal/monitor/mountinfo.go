@@ -139,7 +139,9 @@ func (p *MountInfo) readMounts() ([]map[string]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", p.mountsPath, err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	var results []map[string]any
 	scanner := bufio.NewScanner(f)

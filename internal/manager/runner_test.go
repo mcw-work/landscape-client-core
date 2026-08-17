@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -260,8 +259,6 @@ func TestRunner_HandlerErrorLogged(t *testing.T) {
 	if !strings.Contains(logOutput, "something went wrong") {
 		t.Errorf("expected error logged, got: %q", logOutput)
 	}
-	// Runner should still be functioning (no crash), verify via fmt to avoid unused import.
-	_ = fmt.Sprintf("runner ok")
 }
 
 func TestRunner_WaitTracksMultipleInFlightHandlers(t *testing.T) {

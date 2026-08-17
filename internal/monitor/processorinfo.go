@@ -116,7 +116,9 @@ func (p *ProcessorInfo) parseX86() []map[string]any {
 		log.Printf("processor-info: opening %s: %v", p.cpuinfoPath, err)
 		return nil
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	var processors []map[string]any
 	var current map[string]any
@@ -165,7 +167,9 @@ func (p *ProcessorInfo) parseARM64() []map[string]any {
 		log.Printf("processor-info: opening %s: %v", p.cpuinfoPath, err)
 		return nil
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	var processors []map[string]any
 	var current map[string]any

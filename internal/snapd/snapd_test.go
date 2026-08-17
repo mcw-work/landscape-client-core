@@ -76,7 +76,7 @@ func TestListSnaps(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(syncResponse(want))
+		_, _ = w.Write(syncResponse(want))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -106,7 +106,7 @@ func TestListServices(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(syncResponse(want))
+		_, _ = w.Write(syncResponse(want))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -129,9 +129,11 @@ func TestInstallSnap(t *testing.T) {
 			return
 		}
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(asyncResponse("change-1"))
+		_, _ = w.Write(asyncResponse("change-1"))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -156,9 +158,11 @@ func TestRemoveSnap(t *testing.T) {
 	var gotBody map[string]any
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(asyncResponse("change-2"))
+		_, _ = w.Write(asyncResponse("change-2"))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -180,9 +184,11 @@ func TestRefreshSnap(t *testing.T) {
 	var gotBody map[string]any
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(asyncResponse("change-3"))
+		_, _ = w.Write(asyncResponse("change-3"))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -204,9 +210,11 @@ func TestStartService(t *testing.T) {
 	var gotBody map[string]any
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(syncResponse(nil))
+		_, _ = w.Write(syncResponse(nil))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -229,9 +237,11 @@ func TestStopService(t *testing.T) {
 	var gotBody map[string]any
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(syncResponse(nil))
+		_, _ = w.Write(syncResponse(nil))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -250,9 +260,11 @@ func TestRestartService(t *testing.T) {
 	var gotBody map[string]any
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(syncResponse(nil))
+		_, _ = w.Write(syncResponse(nil))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -277,7 +289,7 @@ func TestWaitForChange_Done(t *testing.T) {
 		}
 		result := map[string]any{"status": status}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(syncResponse(result))
+		_, _ = w.Write(syncResponse(result))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -299,7 +311,7 @@ func TestWaitForChange_Error(t *testing.T) {
 			"err":    map[string]string{"message": "something went wrong"},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(syncResponse(result))
+		_, _ = w.Write(syncResponse(result))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -322,10 +334,10 @@ func TestGetAssertions(t *testing.T) {
 		switch r.URL.Path {
 		case "/v2/assertions/serial":
 			w.Header().Set("Content-Type", "application/x.ubuntu.assertion")
-			fmt.Fprint(w, serialAssertion)
+			_, _ = fmt.Fprint(w, serialAssertion)
 		case "/v2/assertions/model":
 			w.Header().Set("Content-Type", "application/x.ubuntu.assertion")
-			fmt.Fprint(w, modelAssertion)
+			_, _ = fmt.Fprint(w, modelAssertion)
 		default:
 			http.NotFound(w, r)
 		}
@@ -355,7 +367,7 @@ func TestGetRebootRequired_True(t *testing.T) {
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(syncResponse(result))
+		_, _ = w.Write(syncResponse(result))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -376,7 +388,7 @@ func TestGetRebootRequired_False(t *testing.T) {
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(syncResponse(result))
+		_, _ = w.Write(syncResponse(result))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -399,7 +411,7 @@ func TestContextCancellation(t *testing.T) {
 			return
 		case <-time.After(5 * time.Second):
 		}
-		w.Write(syncResponse([]snapd.SnapInfo{}))
+		_, _ = w.Write(syncResponse([]snapd.SnapInfo{}))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -418,7 +430,7 @@ func TestWaitForChange_ContextCancel(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		result := map[string]any{"status": "Doing"}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(syncResponse(result))
+		_, _ = w.Write(syncResponse(result))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
@@ -489,9 +501,15 @@ func TestMockClient_ErrPropagation(t *testing.T) {
 
 func TestMockClient_ServiceActions(t *testing.T) {
 	mc := &snapd.MockClient{}
-	mc.StartService(context.Background(), "lxd", "daemon")
-	mc.StopService(context.Background(), "lxd", "daemon")
-	mc.RestartService(context.Background(), "lxd", "daemon")
+	if err := mc.StartService(context.Background(), "lxd", "daemon"); err != nil {
+		t.Fatalf("StartService: %v", err)
+	}
+	if err := mc.StopService(context.Background(), "lxd", "daemon"); err != nil {
+		t.Fatalf("StopService: %v", err)
+	}
+	if err := mc.RestartService(context.Background(), "lxd", "daemon"); err != nil {
+		t.Fatalf("RestartService: %v", err)
+	}
 
 	want := []string{"start:lxd.daemon", "stop:lxd.daemon", "restart:lxd.daemon"}
 	if len(mc.ServiceActions) != len(want) {

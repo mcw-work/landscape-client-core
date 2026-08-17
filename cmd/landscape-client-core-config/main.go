@@ -118,9 +118,13 @@ func readLine(r *bufio.Reader) (string, error) {
 // and returns defaultVal when the user enters blank.
 func (w *wizard) promptLine(prompt, defaultVal string) (string, error) {
 	if defaultVal != "" {
-		fmt.Fprintf(w.io.out, "%s [%s]: ", prompt, defaultVal)
+		if _, err := fmt.Fprintf(w.io.out, "%s [%s]: ", prompt, defaultVal); err != nil {
+			return "", err
+		}
 	} else {
-		fmt.Fprintf(w.io.out, "%s: ", prompt)
+		if _, err := fmt.Fprintf(w.io.out, "%s: ", prompt); err != nil {
+			return "", err
+		}
 	}
 	line, err := readLine(w.io.in)
 	if err != nil {
@@ -137,22 +141,34 @@ func (w *wizard) promptLine(prompt, defaultVal string) (string, error) {
 // (pipes, test *strings.Reader, etc.).
 func (w *wizard) readPassword(prompt string) (string, error) {
 	if f, ok := w.io.inRaw.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-		fmt.Fprint(w.io.out, prompt)
+		if _, err := fmt.Fprint(w.io.out, prompt); err != nil {
+			return "", err
+		}
 		b, err := term.ReadPassword(int(f.Fd()))
-		fmt.Fprintln(w.io.out)
+		if _, printErr := fmt.Fprintln(w.io.out); printErr != nil {
+			return "", printErr
+		}
 		return string(b), err
 	}
 	// Non-TTY fallback: use the shared buffered reader.
-	fmt.Fprint(w.io.out, prompt)
+	if _, err := fmt.Fprint(w.io.out, prompt); err != nil {
+		return "", err
+	}
 	return readLine(w.io.in)
 }
 
 // Run executes the interactive configuration wizard.
 func (w *wizard) Run() error {
 	// Step 1: Landscape Edition
-	fmt.Fprintln(w.io.out, "Manage this machine with Landscape (https://ubuntu.com/landscape)")
-	fmt.Fprintln(w.io.out, "")
-	fmt.Fprint(w.io.out, "Will you be using your own Self-Hosted Landscape installation? [y/N]: ")
+	if _, err := fmt.Fprintln(w.io.out, "Manage this machine with Landscape (https://ubuntu.com/landscape)"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w.io.out, ""); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprint(w.io.out, "Will you be using your own Self-Hosted Landscape installation? [y/N]: "); err != nil {
+		return err
+	}
 	edition, err := readLine(w.io.in)
 	if err != nil {
 		return err
@@ -160,10 +176,18 @@ func (w *wizard) Run() error {
 	edition = strings.ToLower(strings.TrimSpace(edition))
 	if edition == "y" || edition == "yes" {
 		w.state.selfHosted = true
-		fmt.Fprintln(w.io.out, "Provide the fully qualified domain name of your Landscape Server")
-		fmt.Fprintln(w.io.out, "e.g. landscape.example.com")
-		fmt.Fprintln(w.io.out, "")
-		fmt.Fprint(w.io.out, "Landscape Domain: ")
+		if _, err := fmt.Fprintln(w.io.out, "Provide the fully qualified domain name of your Landscape Server"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w.io.out, "e.g. landscape.example.com"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w.io.out, ""); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprint(w.io.out, "Landscape Domain: "); err != nil {
+			return err
+		}
 		domain, err := readLine(w.io.in)
 		if err != nil {
 			return err
@@ -185,9 +209,15 @@ func (w *wizard) Run() error {
 	if defaultTitle == "" {
 		defaultTitle = hostname
 	}
-	fmt.Fprintln(w.io.out, "The computer title you provide will be used to represent this")
-	fmt.Fprintln(w.io.out, "computer in the Landscape dashboard.")
-	fmt.Fprintln(w.io.out, "")
+	if _, err := fmt.Fprintln(w.io.out, "The computer title you provide will be used to represent this"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w.io.out, "computer in the Landscape dashboard."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w.io.out, ""); err != nil {
+		return err
+	}
 	title, err := w.promptLine("This computer's title", defaultTitle)
 	if err != nil {
 		return err
@@ -207,10 +237,18 @@ func (w *wizard) Run() error {
 		}
 	} else {
 		// SaaS or canonical.com self-hosted: no default — must be provided.
-		fmt.Fprintln(w.io.out, "You must now specify the name of the Landscape account you")
-		fmt.Fprintln(w.io.out, "want to register this computer with. Your account name is shown")
-		fmt.Fprintln(w.io.out, "under 'Account name' at https://landscape.canonical.com .")
-		fmt.Fprintln(w.io.out, "")
+		if _, err := fmt.Fprintln(w.io.out, "You must now specify the name of the Landscape account you"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w.io.out, "want to register this computer with. Your account name is shown"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w.io.out, "under 'Account name' at https://landscape.canonical.com ."); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w.io.out, ""); err != nil {
+			return err
+		}
 	}
 	for {
 		account, err := w.promptLine("Account name", defaultAccount)
@@ -221,14 +259,22 @@ func (w *wizard) Run() error {
 			w.state.accountName = account
 			break
 		}
-		fmt.Fprintln(w.io.out, "Account name is required.")
+		if _, err := fmt.Fprintln(w.io.out, "Account name is required."); err != nil {
+			return err
+		}
 	}
 
 	// Step 4: Registration Key (optional; both entries must match)
-	fmt.Fprintln(w.io.out, "A Registration Key prevents unauthorized registration attempts.")
-	fmt.Fprintln(w.io.out, "")
-	fmt.Fprintf(w.io.out, "Provide the Registration Key found at:\nhttps://%s/account/%s\n\n",
-		w.state.domain, w.state.accountName)
+	if _, err := fmt.Fprintln(w.io.out, "A Registration Key prevents unauthorized registration attempts."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w.io.out, ""); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w.io.out, "Provide the Registration Key found at:\nhttps://%s/account/%s\n\n",
+		w.state.domain, w.state.accountName); err != nil {
+		return err
+	}
 	for {
 		key1, err := w.readPassword("(Optional) Registration Key: ")
 		if err != nil {
@@ -242,13 +288,21 @@ func (w *wizard) Run() error {
 			w.state.registrationKey = key1
 			break
 		}
-		fmt.Fprintln(w.io.out, "Keys must match.")
+		if _, err := fmt.Fprintln(w.io.out, "Keys must match."); err != nil {
+			return err
+		}
 	}
 
 	// Step 5: Proxies (both optional)
-	fmt.Fprintln(w.io.out, "If your network requires you to use a proxy, provide the address")
-	fmt.Fprintln(w.io.out, "of these proxies now.")
-	fmt.Fprintln(w.io.out, "")
+	if _, err := fmt.Fprintln(w.io.out, "If your network requires you to use a proxy, provide the address"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w.io.out, "of these proxies now."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w.io.out, ""); err != nil {
+		return err
+	}
 	defaultHTTP, _ := w.snapctl.Get("http-proxy")
 	defaultHTTPS, _ := w.snapctl.Get("https-proxy")
 	httpProxy, err := w.promptLine("HTTP proxy URL", defaultHTTP)
@@ -263,8 +317,12 @@ func (w *wizard) Run() error {
 	w.state.httpsProxy = httpsProxy
 
 	// Step 6: Access Group (optional)
-	fmt.Fprintln(w.io.out, "You may provide an access group for this computer e.g. webservers.")
-	fmt.Fprintln(w.io.out, "")
+	if _, err := fmt.Fprintln(w.io.out, "You may provide an access group for this computer e.g. webservers."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w.io.out, ""); err != nil {
+		return err
+	}
 	defaultAccessGroup, _ := w.snapctl.Get("access-group")
 	accessGroup, err := w.promptLine("Access group", defaultAccessGroup)
 	if err != nil {
@@ -273,7 +331,9 @@ func (w *wizard) Run() error {
 	w.state.accessGroup = accessGroup
 
 	// Step 7: Tags (optional; comma-separated; each validated against tagRE)
-	fmt.Fprintln(w.io.out, "")
+	if _, err := fmt.Fprintln(w.io.out, ""); err != nil {
+		return err
+	}
 	defaultTags, _ := w.snapctl.Get("tags")
 	for {
 		tags, err := w.promptLine("Tags (comma-separated)", defaultTags)
@@ -288,8 +348,10 @@ func (w *wizard) Run() error {
 		for _, part := range strings.Split(tags, ",") {
 			t := strings.TrimSpace(part)
 			if t != "" && !validateTag(t) {
-				fmt.Fprintf(w.io.out,
-					"Invalid tag %q: tags must start with alphanumeric and contain only alphanumeric characters and hyphens.\n", t)
+				if _, err := fmt.Fprintf(w.io.out,
+					"Invalid tag %q: tags must start with alphanumeric and contain only alphanumeric characters and hyphens.\n", t); err != nil {
+					return err
+				}
 				valid = false
 				break
 			}
@@ -305,25 +367,47 @@ func (w *wizard) Run() error {
 	if w.state.registrationKey != "" {
 		regKeyDisplay = "(set)"
 	}
-	fmt.Fprintln(w.io.out, "\nA summary of the provided information:")
-	fmt.Fprintf(w.io.out, "  Computer's Title: %s\n", w.state.computerTitle)
-	fmt.Fprintf(w.io.out, "  Account Name:     %s\n", w.state.accountName)
-	fmt.Fprintf(w.io.out, "  Landscape FQDN:   %s\n", w.state.domain)
-	fmt.Fprintf(w.io.out, "  Registration Key: %s\n", regKeyDisplay)
-	fmt.Fprintf(w.io.out, "  HTTP Proxy:       %s\n", w.state.httpProxy)
-	fmt.Fprintf(w.io.out, "  HTTPS Proxy:      %s\n", w.state.httpsProxy)
-	fmt.Fprintf(w.io.out, "  Access Group:     %s\n", w.state.accessGroup)
-	fmt.Fprintf(w.io.out, "  Tags:             %s\n", w.state.tags)
+	if _, err := fmt.Fprintln(w.io.out, "\nA summary of the provided information:"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w.io.out, "  Computer's Title: %s\n", w.state.computerTitle); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w.io.out, "  Account Name:     %s\n", w.state.accountName); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w.io.out, "  Landscape FQDN:   %s\n", w.state.domain); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w.io.out, "  Registration Key: %s\n", regKeyDisplay); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w.io.out, "  HTTP Proxy:       %s\n", w.state.httpProxy); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w.io.out, "  HTTPS Proxy:      %s\n", w.state.httpsProxy); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w.io.out, "  Access Group:     %s\n", w.state.accessGroup); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w.io.out, "  Tags:             %s\n", w.state.tags); err != nil {
+		return err
+	}
 
 	// Step 9: Confirm
-	fmt.Fprint(w.io.out, "\nApply this configuration? [Y/n]: ")
+	if _, err := fmt.Fprint(w.io.out, "\nApply this configuration? [Y/n]: "); err != nil {
+		return err
+	}
 	confirm, err := readLine(w.io.in)
 	if err != nil {
 		return err
 	}
 	confirm = strings.ToLower(strings.TrimSpace(confirm))
 	if confirm == "n" || confirm == "no" {
-		fmt.Fprintln(w.io.out, "Configuration not saved.")
+		if _, err := fmt.Fprintln(w.io.out, "Configuration not saved."); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -354,9 +438,9 @@ func (w *wizard) Run() error {
 
 	// Restart the daemon; failure is a warning only (config already written)
 	if err := w.snapctl.Restart("landscape-client-core"); err != nil {
-		fmt.Fprintf(w.io.err, "Warning: failed to restart landscape-client-core: %v\n", err)
-		fmt.Fprintln(w.io.err, "Configuration has been saved. You can restart manually with:")
-		fmt.Fprintln(w.io.err, "  snap restart landscape-client-core")
+		_, _ = fmt.Fprintf(w.io.err, "Warning: failed to restart landscape-client-core: %v\n", err)
+		_, _ = fmt.Fprintln(w.io.err, "Configuration has been saved. You can restart manually with:")
+		_, _ = fmt.Fprintln(w.io.err, "  snap restart landscape-client-core")
 	}
 
 	return nil
@@ -373,7 +457,7 @@ func main() {
 		snapctl: &RealSnapctlRunner{},
 	}
 	if err := w.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }

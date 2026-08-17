@@ -65,7 +65,9 @@ func (p *MemoryInfo) sample() (freeMemMB, freeSwapMB int64, err error) {
 	if err != nil {
 		return 0, 0, fmt.Errorf("opening %s: %w", p.procMeminfoPath, err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	var memFreeKB, buffersKB, cachedKB, swapFreeKB int64
 	var foundMem, foundBuffers, foundCached, foundSwap bool
