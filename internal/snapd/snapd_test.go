@@ -130,7 +130,8 @@ func TestInstallSnap(t *testing.T) {
 		}
 		body, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(body, &gotBody); err != nil {
-			t.Fatalf("unmarshal body: %v", err)
+			t.Errorf("unmarshal body: %v", err)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(asyncResponse("change-1"))
@@ -159,7 +160,8 @@ func TestRemoveSnap(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(body, &gotBody); err != nil {
-			t.Fatalf("unmarshal body: %v", err)
+			t.Errorf("unmarshal body: %v", err)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(asyncResponse("change-2"))
@@ -185,7 +187,8 @@ func TestRefreshSnap(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(body, &gotBody); err != nil {
-			t.Fatalf("unmarshal body: %v", err)
+			t.Errorf("unmarshal body: %v", err)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(asyncResponse("change-3"))
@@ -211,7 +214,8 @@ func TestStartService(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(body, &gotBody); err != nil {
-			t.Fatalf("unmarshal body: %v", err)
+			t.Errorf("unmarshal body: %v", err)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(syncResponse(nil))
@@ -238,7 +242,8 @@ func TestStopService(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(body, &gotBody); err != nil {
-			t.Fatalf("unmarshal body: %v", err)
+			t.Errorf("unmarshal body: %v", err)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(syncResponse(nil))
@@ -261,7 +266,8 @@ func TestRestartService(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(body, &gotBody); err != nil {
-			t.Fatalf("unmarshal body: %v", err)
+			t.Errorf("unmarshal body: %v", err)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(syncResponse(nil))
