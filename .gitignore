@@ -1,0 +1,17 @@
+# Snap build output — release artifacts belong in the Snap Store, not git
+*.snap
+parts/
+prime/
+stage/
+snapcraft_output.log
+
+# Compiled binaries (built by `go build ./cmd/...`)
+/landscape-client-core
+/landscape-client-core-config
+
+# Test and scratch output
+*.log
+test_output.txt
+test_results.txt
+*.patch
+fix_transport.py
