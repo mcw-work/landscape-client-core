@@ -79,7 +79,9 @@ func (p *CPUUsage) sample() (float64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("opening %s: %w", p.procStatPath, err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	scanner := bufio.NewScanner(f)
 	if !scanner.Scan() {

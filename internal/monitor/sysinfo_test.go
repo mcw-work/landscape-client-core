@@ -71,16 +71,16 @@ func atomicWriteFixture(t *testing.T, path, content string) {
 	}
 	name := tmp.Name()
 	if _, err := fmt.Fprint(tmp, content); err != nil {
-		tmp.Close()
-		os.Remove(name)
+		_ = tmp.Close()
+		_ = os.Remove(name)
 		t.Fatalf("atomicWriteFixture: write: %v", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(name)
+		_ = os.Remove(name)
 		t.Fatalf("atomicWriteFixture: close: %v", err)
 	}
 	if err := os.Rename(name, path); err != nil {
-		os.Remove(name)
+		_ = os.Remove(name)
 		t.Fatalf("atomicWriteFixture: rename: %v", err)
 	}
 }

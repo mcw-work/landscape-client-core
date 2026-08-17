@@ -105,7 +105,9 @@ func (c *RealClient) get(ctx context.Context, path string) (*snapdResponse, erro
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	return decodeResponse(resp.Body)
 }
 
@@ -123,7 +125,9 @@ func (c *RealClient) post(ctx context.Context, path string, body any) (*snapdRes
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	return decodeResponse(resp.Body)
 }
 
@@ -301,7 +305,9 @@ func (c *RealClient) fetchAssertionHeaders(ctx context.Context, path string) (ma
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, errNotFound
 	}
@@ -321,7 +327,9 @@ func (c *RealClient) fetchModelAssertion(ctx context.Context) (string, string, e
 	if err != nil {
 		return "", "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode == http.StatusNotFound {
 		return "", "", errNotFound
 	}

@@ -34,7 +34,9 @@ func dbusShutdown(reboot bool) error {
 	if err != nil {
 		return fmt.Errorf("connecting to system bus: %w", err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	obj := conn.Object("org.freedesktop.login1", "/org/freedesktop/login1")
 
@@ -197,7 +199,9 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 	if err := os.MkdirAll(scriptDir, 0700); err != nil {
 		return err
 	}
-	defer os.RemoveAll(scriptDir)
+	defer func() {
+		_ = os.RemoveAll(scriptDir)
+	}()
 
 	// Write script with shebang.
 	scriptPath := filepath.Join(scriptDir, "script")

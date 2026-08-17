@@ -28,7 +28,7 @@ func newTestClient(t *testing.T, cfg transport.Config) *transport.Client {
 func TestPost_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("hello"))
+		_, _ = w.Write([]byte("hello"))
 	}))
 	defer srv.Close()
 
@@ -253,7 +253,7 @@ func TestClient_Get_HTTPError(t *testing.T) {
 func TestPost_TLSCustomCA(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("tls-ok"))
+		_, _ = w.Write([]byte("tls-ok"))
 	}))
 	defer srv.Close()
 
@@ -283,7 +283,9 @@ func writeTLSServerCert(t *testing.T, srv *httptest.Server) string {
 	if err != nil {
 		t.Fatalf("creating temp file: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	if err := pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: x509Cert.Raw}); err != nil {
 		t.Fatalf("writing cert PEM: %v", err)
@@ -356,8 +358,12 @@ func TestNew_InvalidPEM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating temp file: %v", err)
 	}
-	f.WriteString("this is not valid PEM content")
-	f.Close()
+	if _, err := f.WriteString("this is not valid PEM content"); err != nil {
+		t.Fatalf("writing invalid PEM fixture: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing invalid PEM fixture: %v", err)
+	}
 
 	_, err = transport.New(transport.Config{SSLPublicKey: f.Name()})
 	if err == nil {

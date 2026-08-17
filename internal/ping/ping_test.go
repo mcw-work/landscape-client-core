@@ -50,7 +50,7 @@ func TestPing_TriggersExchangeWhenMessagesTrue(t *testing.T) {
 		if got := r.FormValue("insecure_id"); got != "42" {
 			t.Errorf("insecure_id: want 42, got %q", got)
 		}
-		w.Write(pingResponse(t, true))
+		_, _ = w.Write(pingResponse(t, true))
 	}))
 	defer srv.Close()
 
@@ -77,7 +77,7 @@ func TestPing_NoTriggerWhenMessagesFalse(t *testing.T) {
 	var triggered atomic.Bool
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(pingResponse(t, false))
+		_, _ = w.Write(pingResponse(t, false))
 	}))
 	defer srv.Close()
 
@@ -100,7 +100,7 @@ func TestPing_SkipsWhenNotRegistered(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pinged.Store(true)
-		w.Write(pingResponse(t, false))
+		_, _ = w.Write(pingResponse(t, false))
 	}))
 	defer srv.Close()
 
@@ -130,7 +130,7 @@ func TestPing_HandlesServerError(t *testing.T) {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		w.Write(pingResponse(t, true))
+		_, _ = w.Write(pingResponse(t, true))
 	}))
 	defer srv.Close()
 
@@ -156,7 +156,7 @@ func TestPing_SetInterval(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount.Add(1)
-		w.Write(pingResponse(t, false))
+		_, _ = w.Write(pingResponse(t, false))
 	}))
 	defer srv.Close()
 
@@ -179,9 +179,11 @@ func TestPinger_DoPing_FormValues(t *testing.T) {
 	var gotValues url.Values
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("parse form: %v", err)
+		}
 		gotValues = r.Form
-		w.Write(pingResponse(t, false))
+		_, _ = w.Write(pingResponse(t, false))
 	}))
 	defer srv.Close()
 
@@ -190,7 +192,9 @@ func TestPinger_DoPing_FormValues(t *testing.T) {
 		tc:      newTransport(t),
 	}
 
-	p.doPing(context.Background(), "special-id-123")
+	if _, err := p.doPing(context.Background(), "special-id-123"); err != nil {
+		t.Fatalf("doPing: %v", err)
+	}
 
 	if got := gotValues.Get("insecure_id"); got != "special-id-123" {
 		t.Errorf("insecure_id: want %q, got %q", "special-id-123", got)

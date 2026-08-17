@@ -165,7 +165,9 @@ func (p *ComputerInfo) readMeminfo() (totalMemMB, totalSwapMB int64) {
 		log.Printf("computer-info: opening %s: %v", p.meminfoPath, err)
 		return
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
@@ -202,7 +204,9 @@ func (p *ComputerInfo) readOSRelease() (distributorID, description, release, cod
 		log.Printf("computer-info: opening %s: %v", p.osReleasePath, err)
 		return
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
