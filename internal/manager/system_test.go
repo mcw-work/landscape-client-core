@@ -57,7 +57,7 @@ func TestShutdownHandler_Reboot(t *testing.T) {
 	}}
 
 	h := manager.NewShutdownHandler()
-	h.Shutdown = func(reboot bool) error {
+	h.Shutdown = func(_ context.Context, reboot bool) error {
 		if reboot {
 			events = append(events, "shutdown:reboot")
 		} else {
@@ -93,7 +93,7 @@ func TestShutdownHandler_Poweroff(t *testing.T) {
 	var gotReboot *bool
 
 	h := manager.NewShutdownHandler()
-	h.Shutdown = func(reboot bool) error {
+	h.Shutdown = func(_ context.Context, reboot bool) error {
 		gotReboot = &reboot
 		return nil
 	}
@@ -122,7 +122,7 @@ func TestShutdownHandler_ExecError(t *testing.T) {
 	sink := &mockResultSink{}
 
 	h := manager.NewShutdownHandler()
-	h.Shutdown = func(_ bool) error {
+	h.Shutdown = func(_ context.Context, _ bool) error {
 		return fmt.Errorf("shutdown failed")
 	}
 

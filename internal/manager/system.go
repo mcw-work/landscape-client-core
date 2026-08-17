@@ -30,8 +30,12 @@ const truncationMarker = "\n**OUTPUT TRUNCATED**"
 // dbusShutdown calls org.freedesktop.login1.Manager Reboot or PowerOff via DBus.
 // interactive is passed as false (non-interactive, matches Python client's True
 // which means "allow polkit interactive auth" — on Ubuntu Core this is fine either way).
-func dbusShutdown(reboot bool) error {
-	conn, err := dbus.ConnectSystemBus()
+// ctx bounds both the bus connection and the method call: an unresponsive logind
+// would otherwise hang this handler indefinitely, and the manager semaphore means
+// a wedged handler eventually starves all manager operations.
+func dbusShutdown(ctx context.Context, reboot bool) error {
+	// godbus v5.2.2 has no ConnectSystemBusWithContext; WithContext binds ctx to the conn.
+	conn, err := dbus.ConnectSystemBus(dbus.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("connecting to system bus: %w", err)
 	}
@@ -46,14 +50,14 @@ func dbusShutdown(reboot bool) error {
 		method = "org.freedesktop.login1.Manager.Reboot"
 	}
 
-	return obj.Call(method, 0, false).Store()
+	return obj.CallWithContext(ctx, method, 0, false).Store()
 }
 
 // ShutdownHandler handles "shutdown" commands.
 type ShutdownHandler struct {
 	// Shutdown is the function used to trigger a shutdown or reboot.
 	// Defaults to dbusShutdown; injectable for testing.
-	Shutdown func(reboot bool) error
+	Shutdown func(ctx context.Context, reboot bool) error
 }
 
 // NewShutdownHandler creates a ShutdownHandler with the default DBus executor.
@@ -80,7 +84,9 @@ func (h *ShutdownHandler) Handle(ctx context.Context, msg exchange.Message, resu
 		action = "reboot"
 	}
 	log.Printf("shutdown: requesting %s via DBus", action)
-	if err := h.Shutdown(reboot); err != nil {
+	dbusCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := h.Shutdown(dbusCtx, reboot); err != nil {
 		log.Printf("shutdown: %s failed: %v", action, err)
 		_ = result.SendResult(ctx, opID, exchange.StatusFailed, err.Error())
 	}
