@@ -58,7 +58,9 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			services, err := p.snapdClient.ListServices(ctx)
+			callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+			services, err := p.snapdClient.ListServices(callCtx)
+			cancel()
 			if err != nil {
 				log.Printf("snap-services: listing services: %v", err)
 				continue

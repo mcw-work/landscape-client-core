@@ -89,9 +89,12 @@ func New(socketPath string) Client {
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
 		},
+		ResponseHeaderTimeout: 30 * time.Second,
 	}
 	return &RealClient{
-		http:    &http.Client{Transport: transport},
+		// snapd change operations are polled separately via WaitForChange, so no
+		// single request should take this long.
+		http:    &http.Client{Transport: transport, Timeout: 60 * time.Second},
 		baseURL: "http://localhost/v2",
 	}
 }

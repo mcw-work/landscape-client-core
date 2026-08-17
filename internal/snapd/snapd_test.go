@@ -459,6 +459,47 @@ func TestWaitForChange_ContextCancel(t *testing.T) {
 	}
 }
 
+// TestClient_StalledSocketDoesNotHang asserts a snapd socket that accepts the
+// connection and never responds fails within the client timeout rather than
+// blocking the calling plugin for the life of the process.
+func TestClient_StalledSocketDoesNotHang(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "snapd.socket")
+
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		accepted <- conn // hold it open, never respond
+	}()
+
+	c := snapd.New(sockPath)
+	start := time.Now()
+	_, err = c.ListSnaps(context.Background())
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("want an error from a stalled socket, got nil")
+	}
+	if elapsed > 60*time.Second {
+		t.Errorf("ListSnaps blocked for %v; the client has no timeout", elapsed)
+	}
+
+	select {
+	case conn := <-accepted:
+		_ = conn.Close()
+	default:
+	}
+}
+
 // MockClient tests.
 
 func TestMockClient_InstallCalls(t *testing.T) {

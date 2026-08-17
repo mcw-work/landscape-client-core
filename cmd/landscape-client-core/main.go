@@ -159,7 +159,8 @@ func run(ctx context.Context, d deps) error {
 	monRunner := monitor.New(plugins, exc, store)
 
 	// sendSnapUpdate sends an immediate snaps message after a snap operation.
-	sendSnapUpdate := func() { snapPackages.SendNow(context.Background(), exc) }
+	// Uses the daemon context so a snapd call cannot outlive shutdown.
+	sendSnapUpdate := func() { snapPackages.SendNow(ctx, exc) }
 
 	// Create manager runner with all handlers.
 	handlers := []manager.Handler{

@@ -235,7 +235,9 @@ func (p *ComputerInfo) readSnapAssertions(ctx context.Context) (serial, model, b
 	if p.snapdClient == nil {
 		return
 	}
-	assertions, err := p.snapdClient.GetAssertions(ctx)
+	callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+	assertions, err := p.snapdClient.GetAssertions(callCtx)
+	cancel()
 	if err != nil {
 		log.Printf("computer-info: getting snap assertions: %v", err)
 		return

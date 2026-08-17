@@ -69,7 +69,9 @@ func (p *SnapPackagesPlugin) send(ctx context.Context, sink exchange.MessageSink
 // collect queries snapd for installed snaps and converts them to the wire
 // format. On error it logs and returns an empty slice.
 func (p *SnapPackagesPlugin) collect(ctx context.Context) []any {
-	snaps, err := p.snapdClient.ListSnaps(ctx)
+	callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+	snaps, err := p.snapdClient.ListSnaps(callCtx)
+	cancel()
 	if err != nil {
 		log.Printf("snaps: listing snaps: %v", err)
 		return []any{}

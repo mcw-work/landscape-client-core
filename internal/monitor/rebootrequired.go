@@ -57,7 +57,9 @@ func (p *RebootRequiredPlugin) Run(ctx context.Context, sink exchange.MessageSin
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			flag, err := p.snapd.GetRebootRequired(ctx)
+			callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+			flag, err := p.snapd.GetRebootRequired(callCtx)
+			cancel()
 			if err != nil {
 				log.Printf("reboot-required: %v", err)
 				continue
