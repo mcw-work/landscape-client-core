@@ -97,6 +97,43 @@ func main() {
 	// Create snapd client.
 	snapdClient := snapd.New("/run/snapd.socket")
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+
+	if err := run(ctx, deps{
+		cfg:                cfg,
+		store:              store,
+		transport:          tc,
+		snapd:              snapdClient,
+		snapCommon:         snapCommon,
+		handlerConcurrency: *handlerConcurrency,
+	}); err != nil {
+		slog.Error("daemon exited with error", "error", err)
+		os.Exit(1)
+	}
+}
+
+// deps holds the constructed collaborators run() needs, so the daemon wiring
+// can be exercised in tests without touching snapctl or the real snapd socket.
+type deps struct {
+	cfg                *config.Config
+	store              *persist.Store
+	transport          *transport.Client
+	snapd              snapd.Client
+	snapCommon         string
+	handlerConcurrency int
+}
+
+// run wires up the exchange, monitor, manager and ping loops and blocks until
+// ctx is cancelled or a runner fails, then shuts down gracefully. It contains
+// no behaviour that main() did not previously perform inline.
+func run(ctx context.Context, d deps) error {
+	cfg := d.cfg
+	store := d.store
+	tc := d.transport
+	snapdClient := d.snapd
+	snapCommon := d.snapCommon
+
 	// Create exchange.
 	exc := exchange.New(cfg, store, tc)
 
@@ -135,7 +172,7 @@ func main() {
 		manager.NewShutdownHandler(),
 		manager.NewScriptExecHandler(snapCommon, transport.NewAttachmentFetcher(tc, cfg.URL, store)),
 	}
-	mgRunner := manager.NewRunner(handlers, exc, exc, *handlerConcurrency)
+	mgRunner := manager.NewRunner(handlers, exc, exc, d.handlerConcurrency)
 	mgRunner.Register()
 
 	// Create ping loop. The Pinger periodically POSTs to the ping server and
@@ -159,8 +196,7 @@ func main() {
 		}
 	})
 
-	// Signal handling.
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// Run goroutines under a shared errgroup context.
@@ -229,6 +265,8 @@ func main() {
 	case <-time.After(5 * time.Second):
 		slog.Warn("shutdown timeout, exiting")
 	}
+
+	return nil
 }
 
 // snapctlLoader implements config.Loader using snapctl.
