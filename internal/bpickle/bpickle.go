@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+// maxNestingDepth bounds decoder recursion. The protocol nests only a few
+// levels; the cap exists so a hostile response cannot exhaust the goroutine
+// stack, which is a fatal runtime error that recover() cannot catch.
+const maxNestingDepth = 100
+
 // Marshal encodes v into bpickle wire format.
 // Supported types: bool, int (all widths), float64, []byte, string, []any, map[string]any, nil.
 // Returns an error for unsupported types.
@@ -24,7 +29,7 @@ func Unmarshal(data []byte) (any, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("bpickle: cannot unmarshal empty data")
 	}
-	val, _, err := unmarshalValue(data, 0)
+	val, _, err := unmarshalValue(data, 0, 0)
 	return val, err
 }
 
@@ -221,9 +226,12 @@ func marshalDict(v map[string]any) ([]byte, error) {
 }
 
 // unmarshalValue decodes one value starting at pos, returning (value, newPos, error).
-func unmarshalValue(data []byte, pos int) (any, int, error) {
+func unmarshalValue(data []byte, pos int, depth int) (any, int, error) {
 	if pos >= len(data) {
 		return nil, pos, fmt.Errorf("bpickle: unexpected end of data at position %d", pos)
+	}
+	if depth > maxNestingDepth {
+		return nil, pos, fmt.Errorf("bpickle: maximum nesting depth %d exceeded at position %d", maxNestingDepth, pos)
 	}
 	switch data[pos] {
 	case 'n':
@@ -239,11 +247,11 @@ func unmarshalValue(data []byte, pos int) (any, int, error) {
 	case 'u':
 		return unmarshalUnicode(data, pos)
 	case 'l':
-		return unmarshalList(data, pos)
+		return unmarshalList(data, pos, depth)
 	case 't':
-		return unmarshalTuple(data, pos)
+		return unmarshalTuple(data, pos, depth)
 	case 'd':
-		return unmarshalDict(data, pos)
+		return unmarshalDict(data, pos, depth)
 	default:
 		return nil, pos, fmt.Errorf("bpickle: unknown type marker %q at position %d", data[pos], pos)
 	}
@@ -329,7 +337,7 @@ func unmarshalUnicode(data []byte, pos int) (any, int, error) {
 	return string(raw), newPos, nil
 }
 
-func unmarshalList(data []byte, pos int) (any, int, error) {
+func unmarshalList(data []byte, pos int, depth int) (any, int, error) {
 	pos++ // consume 'l'
 	result := make([]any, 0)
 	for {
@@ -339,7 +347,7 @@ func unmarshalList(data []byte, pos int) (any, int, error) {
 		if data[pos] == ';' {
 			return result, pos + 1, nil
 		}
-		val, newPos, err := unmarshalValue(data, pos)
+		val, newPos, err := unmarshalValue(data, pos, depth+1)
 		if err != nil {
 			return nil, pos, err
 		}
@@ -349,7 +357,7 @@ func unmarshalList(data []byte, pos int) (any, int, error) {
 }
 
 // unmarshalTuple decodes a Python tuple ('t') as []any since Go has no tuples.
-func unmarshalTuple(data []byte, pos int) (any, int, error) {
+func unmarshalTuple(data []byte, pos int, depth int) (any, int, error) {
 	pos++ // consume 't'
 	result := make([]any, 0)
 	for {
@@ -359,7 +367,7 @@ func unmarshalTuple(data []byte, pos int) (any, int, error) {
 		if data[pos] == ';' {
 			return result, pos + 1, nil
 		}
-		val, newPos, err := unmarshalValue(data, pos)
+		val, newPos, err := unmarshalValue(data, pos, depth+1)
 		if err != nil {
 			return nil, pos, err
 		}
@@ -368,7 +376,7 @@ func unmarshalTuple(data []byte, pos int) (any, int, error) {
 	}
 }
 
-func unmarshalDict(data []byte, pos int) (any, int, error) {
+func unmarshalDict(data []byte, pos int, depth int) (any, int, error) {
 	pos++ // consume 'd'
 	result := make(map[string]any)
 	for {
@@ -380,7 +388,7 @@ func unmarshalDict(data []byte, pos int) (any, int, error) {
 		}
 
 		// Keys may be 's' (bytes) or 'u' (unicode); both become Go strings.
-		keyAny, newPos, err := unmarshalValue(data, pos)
+		keyAny, newPos, err := unmarshalValue(data, pos, depth+1)
 		if err != nil {
 			return nil, pos, err
 		}
@@ -396,7 +404,7 @@ func unmarshalDict(data []byte, pos int) (any, int, error) {
 			return nil, pos, fmt.Errorf("bpickle: dict key must be string or bytes, got %T", keyAny)
 		}
 
-		val, newPos, err := unmarshalValue(data, pos)
+		val, newPos, err := unmarshalValue(data, pos, depth+1)
 		if err != nil {
 			return nil, pos, err
 		}
