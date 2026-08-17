@@ -5,9 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -673,12 +671,14 @@ func TestExchange_SendResultCode(t *testing.T) {
 	<-done   // wait for Run to return
 }
 
-func TestPerformExchange_HandlerPanicReturnsError(t *testing.T) {
+func TestPerformExchange_HandlerPanicIsContained(t *testing.T) {
 	ts := newTestSetup(t)
 	state := ts.freshState(t)
 	state.SecureID = "sec123"
 
+	panicked := make(chan struct{})
 	ts.ex.Subscribe("boom", func(ctx context.Context, msg Message) {
+		defer close(panicked)
 		panic("boom")
 	})
 
@@ -689,28 +689,27 @@ func TestPerformExchange_HandlerPanicReturnsError(t *testing.T) {
 		"next-expected-sequence": int64(0),
 	})
 
-	err := ts.ex.performExchange(context.Background(), state)
-	if err == nil {
-		t.Fatal("expected handler panic error, got nil")
+	// Handlers are dispatched fire-and-forget: a panicking handler is recovered
+	// inside its own goroutine and must not fail the exchange.
+	if err := ts.ex.performExchange(context.Background(), state); err != nil {
+		t.Fatalf("performExchange must not fail because a handler panicked: %v", err)
 	}
-	if !strings.Contains(err.Error(), "handler panic") {
-		t.Fatalf("expected handler panic in error, got: %v", err)
+	select {
+	case <-panicked:
+	case <-time.After(time.Second):
+		t.Fatal("handler was never dispatched")
 	}
 }
 
-func TestPerformExchange_AllHandlerGoroutinesComplete(t *testing.T) {
+func TestPerformExchange_DoesNotWaitForHandlers(t *testing.T) {
 	ts := newTestSetup(t)
 	state := ts.freshState(t)
 	state.SecureID = "sec123"
 
-	var completed int32
+	done := make(chan struct{})
 	ts.ex.Subscribe("fanout", func(ctx context.Context, msg Message) {
-		time.Sleep(20 * time.Millisecond)
-		atomic.AddInt32(&completed, 1)
-	})
-	ts.ex.Subscribe("fanout", func(ctx context.Context, msg Message) {
-		time.Sleep(10 * time.Millisecond)
-		atomic.AddInt32(&completed, 1)
+		time.Sleep(300 * time.Millisecond)
+		close(done)
 	})
 
 	ts.fs.push(map[string]any{
@@ -720,25 +719,31 @@ func TestPerformExchange_AllHandlerGoroutinesComplete(t *testing.T) {
 		"next-expected-sequence": int64(0),
 	})
 
+	// performExchange must return promptly without blocking on the handler;
+	// tying handler lifetime to the exchange cycle was the P0 defect.
+	start := time.Now()
 	if err := ts.ex.performExchange(context.Background(), state); err != nil {
 		t.Fatalf("performExchange: %v", err)
 	}
-	if got := atomic.LoadInt32(&completed); got != 2 {
-		t.Fatalf("expected all handler goroutines to complete, got %d", got)
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("performExchange waited for the handler (%v); dispatch must be fire-and-forget", elapsed)
+	}
+	// The handler still runs to completion in the background.
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never completed")
 	}
 }
 
-func TestPerformExchange_HandlerContextCancellationPropagates(t *testing.T) {
+func TestPerformExchange_HandlerDispatchDoesNotFailExchange(t *testing.T) {
 	ts := newTestSetup(t)
 	state := ts.freshState(t)
 	state.SecureID = "sec123"
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	ran := make(chan struct{})
 	ts.ex.Subscribe("cancel-me", func(handlerCtx context.Context, msg Message) {
-		cancel()
-		<-handlerCtx.Done()
+		close(ran)
 	})
 
 	ts.fs.push(map[string]any{
@@ -748,11 +753,14 @@ func TestPerformExchange_HandlerContextCancellationPropagates(t *testing.T) {
 		"next-expected-sequence": int64(0),
 	})
 
-	err := ts.ex.performExchange(ctx, state)
-	if err == nil {
-		t.Fatal("expected context cancellation error, got nil")
+	// Handlers are fire-and-forget, so nothing a handler does — including its
+	// context ending — propagates back as an exchange error.
+	if err := ts.ex.performExchange(context.Background(), state); err != nil {
+		t.Fatalf("performExchange must not fail due to handler dispatch: %v", err)
 	}
-	if !strings.Contains(err.Error(), "context canceled") {
-		t.Fatalf("expected context canceled in error, got: %v", err)
+	select {
+	case <-ran:
+	case <-time.After(time.Second):
+		t.Fatal("handler was never dispatched")
 	}
 }
