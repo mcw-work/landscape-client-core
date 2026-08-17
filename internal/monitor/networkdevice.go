@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -110,7 +111,7 @@ func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 		}
 
 		mac := iface.HardwareAddr.String()
-		flags := int(iface.Flags)
+		flags := p.readFlags(iface)
 
 		ipAddr := ""
 		broadcastAddr := "0.0.0.0"
@@ -166,6 +167,57 @@ func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 		speeds = []map[string]any{}
 	}
 	return devices, speeds, nil
+}
+
+// Linux IFF_* values from <linux/if.h>. Go's net.Flags uses a different,
+// sequential bitmask; the Landscape server interprets this field as IFF_*.
+const (
+	iffUp           = 0x1
+	iffBroadcast    = 0x2
+	iffLoopback     = 0x8
+	iffPointToPoint = 0x10
+	iffRunning      = 0x40
+	iffMulticast    = 0x1000
+)
+
+// readFlags returns the kernel IFF_* bitmask for iface, read from
+// /sys/class/net/<name>/flags. When sysfs is unavailable — no such entry, or an
+// AppArmor denial under strict confinement — it falls back to translating Go's
+// net.Flags into IFF_* positions, so the interface is still reported rather than
+// dropped from the server's inventory.
+func (p *NetworkDevice) readFlags(iface *net.Interface) int {
+	data, err := os.ReadFile(filepath.Join(p.sysNetPath, iface.Name, "flags"))
+	if err == nil {
+		s := strings.TrimSpace(string(data))
+		s = strings.TrimPrefix(s, "0x")
+		if v, err := strconv.ParseInt(s, 16, 64); err == nil {
+			return int(v)
+		}
+	}
+	return translateGoFlags(iface.Flags)
+}
+
+func translateGoFlags(f net.Flags) int {
+	var out int
+	if f&net.FlagUp != 0 {
+		out |= iffUp
+	}
+	if f&net.FlagBroadcast != 0 {
+		out |= iffBroadcast
+	}
+	if f&net.FlagLoopback != 0 {
+		out |= iffLoopback
+	}
+	if f&net.FlagPointToPoint != 0 {
+		out |= iffPointToPoint
+	}
+	if f&net.FlagRunning != 0 {
+		out |= iffRunning
+	}
+	if f&net.FlagMulticast != 0 {
+		out |= iffMulticast
+	}
+	return out
 }
 
 func (p *NetworkDevice) readSpeed(iface string) int {
