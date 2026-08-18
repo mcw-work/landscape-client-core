@@ -1,15 +1,17 @@
 package monitor
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -49,7 +51,7 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 		if err := state.GetPluginState(&saved); err != nil {
 			// Zero state is not equivalent to "no changes yet": for users it
 			// re-sends every account as a create.
-			log.Printf("%s: loading state: %v; treating as first run", p.Name(), err)
+			slog.Warn("network-device: cannot load state, treating as first run", "error", err)
 		}
 	}
 
@@ -57,16 +59,17 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 		p.beat(p.Name())
 		devices, speeds, err := p.collect()
 		if err != nil {
-			log.Printf("network-device: %v", err)
+			slog.Warn("network-device: cannot collect", "error", err)
 			return
 		}
 		combined := []any{devices, speeds}
 		data, err := json.Marshal(combined)
 		if err != nil {
-			log.Printf("network-device: marshal: %v", err)
+			slog.Warn("network-device: cannot marshal", "error", err)
 			return
 		}
-		hash := fmt.Sprintf("%x", sha256.Sum256(data))
+		sum := sha256.Sum256(data)
+		hash := hex.EncodeToString(sum[:])
 		if hash == saved.Hash {
 			return
 		}
@@ -74,7 +77,7 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 			if err := state.SetPluginState(networkDeviceState{Hash: hash}); err != nil {
 				// Do not advance the in-memory hash: if the save failed, the
 				// change must be re-detected and re-sent next tick.
-				log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+				slog.Error("network-device: cannot save state, will retry next tick", "error", err)
 				return
 			}
 		}
@@ -85,7 +88,7 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 			"device-speeds": speeds,
 		}
 		if err := sink.Send(ctx, msg); err != nil {
-			log.Printf("network-device: send: %v", err)
+			slog.Warn("network-device: send failed", "error", err)
 		}
 	})
 	return nil
@@ -94,11 +97,11 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 	ifaces, err := p.getInterfaces()
 	if err != nil {
-		return nil, nil, fmt.Errorf("listing interfaces: %w", err)
+		return nil, nil, fmt.Errorf("cannot list interfaces: %w", err)
 	}
 
-	sort.Slice(ifaces, func(i, j int) bool {
-		return ifaces[i].Name < ifaces[j].Name
+	slices.SortFunc(ifaces, func(a, b net.Interface) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 
 	var devices []map[string]any
@@ -126,7 +129,7 @@ func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 
 		addrs, err := p.getAddrs(iface)
 		if err != nil {
-			log.Printf("network-device: getting addrs for %s: %v", name, err)
+			slog.Warn("network-device: cannot get addrs", "interface", name, "error", err)
 		} else {
 			for _, addr := range addrs {
 				ipNet, ok := addr.(*net.IPNet)
@@ -141,7 +144,7 @@ func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 				mask := ipNet.Mask
 				netmask = fmt.Sprintf("%d.%d.%d.%d", mask[0], mask[1], mask[2], mask[3])
 				broadcast := make(net.IP, 4)
-				for i := 0; i < 4; i++ {
+				for i := range 4 {
 					broadcast[i] = ip4[i] | ^mask[i]
 				}
 				broadcastAddr = broadcast.String()
@@ -228,7 +231,7 @@ func translateGoFlags(f net.Flags) int {
 }
 
 func (p *NetworkDevice) readSpeed(iface string) int {
-	path := fmt.Sprintf("%s/%s/speed", p.sysNetPath, iface)
+	path := filepath.Join(p.sysNetPath, iface, "speed")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return -1
@@ -241,7 +244,7 @@ func (p *NetworkDevice) readSpeed(iface string) int {
 }
 
 func (p *NetworkDevice) readDuplex(iface string) bool {
-	path := fmt.Sprintf("%s/%s/duplex", p.sysNetPath, iface)
+	path := filepath.Join(p.sysNetPath, iface, "duplex")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false

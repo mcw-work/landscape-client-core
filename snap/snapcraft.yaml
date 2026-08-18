@@ -1,7 +1,7 @@
 name: landscape-client-core
 title: Landscape Client for Ubuntu Core
 base: core24
-version: 26.04
+version: 26.08~beta.2
 summary: Landscape client for Ubuntu Core devices
 description: |
   Manages Ubuntu Core devices with Canonical Landscape.
@@ -22,7 +22,8 @@ apps:
     daemon: simple
     restart-condition: on-failure
     environment:
-      GOGC: "50"
+      GOMEMLIMIT: "64MiB"
+      GOMAXPROCS: "2"
     plugs:
       - network
       - snapd-control
@@ -69,6 +70,5 @@ parts:
       - go/1.25/stable
     stage-packages:
       - lshw
-      - curl
     override-build: |
-      go build -ldflags="-s -w" -trimpath -o "$CRAFT_PART_INSTALL/bin/" ./cmd/landscape-client-core/ ./cmd/landscape-client-core-config/
+      go build -ldflags="-s -w -X github.com/canonical/landscape-client-core/internal/version.Version=$CRAFT_PROJECT_VERSION" -trimpath -o "$CRAFT_PART_INSTALL/bin/" ./cmd/landscape-client-core/ ./cmd/landscape-client-core-config/

@@ -21,6 +21,7 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 	if state == nil {
 		t.Fatal("expected non-nil state")
+		return
 	}
 	if state.SecureID != "" || state.OutboundSequence != 0 {
 		t.Errorf("expected zero-value state, got: %+v", state)
@@ -259,8 +260,7 @@ func TestConcurrentSave(t *testing.T) {
 	const goroutines = 10
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for i := int64(0); i < goroutines; i++ {
-		i := i
+	for i := range int64(goroutines) {
 		go func() {
 			defer wg.Done()
 			state := &persist.State{OutboundSequence: i}

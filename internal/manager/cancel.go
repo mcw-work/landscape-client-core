@@ -2,7 +2,7 @@ package manager
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
@@ -67,7 +67,7 @@ func (h *CancelHandler) Handle(_ context.Context, msg exchange.Message, _ exchan
 	}
 
 	if h.opCtxMgr != nil {
-		log.Printf("cancel-operation: cancelling op=%d", opID)
+		slog.Info("cancel-operation: cancelling", "op", opID)
 		h.opCtxMgr.Cancel(opID)
 	}
 

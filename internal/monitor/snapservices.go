@@ -1,12 +1,13 @@
 package monitor
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"log"
-	"sort"
+	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
@@ -60,12 +61,12 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 		services, err := p.snapdClient.ListServices(callCtx)
 		cancel()
 		if err != nil {
-			log.Printf("snap-services: listing services: %v", err)
+			slog.Warn("snap-services: cannot list services", "error", err)
 			return
 		}
 		// Sort by name for stable hashing and consistent output.
-		sort.Slice(services, func(i, j int) bool {
-			return services[i].Name < services[j].Name
+		slices.SortFunc(services, func(a, b snapd.ServiceInfo) int {
+			return cmp.Compare(a.Name, b.Name)
 		})
 		hash := hashSnapServices(services)
 		if hash == prevHash {
@@ -75,7 +76,7 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 			if err := state.SetPluginState(snapServicesState{Hash: hash}); err != nil {
 				// Do not advance the in-memory hash: if the save failed, the
 				// change must be re-detected and re-sent next tick.
-				log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+				slog.Error("snap-services: cannot save state, will retry next tick", "error", err)
 				return
 			}
 		}
@@ -96,7 +97,7 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 			},
 		}
 		if err := sink.Send(ctx, msg); err != nil {
-			log.Printf("snap-services: send: %v", err)
+			slog.Warn("snap-services: send failed", "error", err)
 		}
 	})
 	return nil
@@ -106,5 +107,6 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 // slice. The caller must sort the slice before calling this function.
 func hashSnapServices(services []snapd.ServiceInfo) string {
 	data, _ := json.Marshal(services)
-	return fmt.Sprintf("%x", sha256.Sum256(data))
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -53,7 +53,7 @@ func (s *Store) Load() (*State, error) {
 		if berr == nil {
 			var recovered State
 			if jerr := json.Unmarshal(backup, &recovered); jerr == nil {
-				log.Printf("persist: %s is corrupt (%v); recovered from %s.old", s.path, err, s.path)
+				slog.Warn("persist: state file is corrupt, recovered from backup", "path", s.path, "error", err, "backup", s.path+".old")
 				if recovered.PluginState == nil {
 					recovered.PluginState = make(map[string]json.RawMessage)
 				}
@@ -71,12 +71,12 @@ func (s *Store) loadLocked() (*State, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return &State{PluginState: make(map[string]json.RawMessage)}, nil
 		}
-		return nil, fmt.Errorf("persist: reading state file: %w", err)
+		return nil, fmt.Errorf("persist: cannot read state file: %w", err)
 	}
 
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("persist: decoding state file: %w", err)
+		return nil, fmt.Errorf("persist: cannot decode state file: %w", err)
 	}
 	if state.PluginState == nil {
 		state.PluginState = make(map[string]json.RawMessage)
@@ -96,12 +96,12 @@ func (s *Store) Save(state *State) error {
 func (s *Store) saveLocked(state *State) error {
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("persist: creating state directory: %w", err)
+		return fmt.Errorf("persist: cannot create state directory: %w", err)
 	}
 
 	data, err := json.Marshal(state)
 	if err != nil {
-		return fmt.Errorf("persist: encoding state: %w", err)
+		return fmt.Errorf("persist: cannot encode state: %w", err)
 	}
 
 	// Use os.CreateTemp so each Save call gets a unique temp file, making
@@ -109,36 +109,36 @@ func (s *Store) saveLocked(state *State) error {
 	// final os.Rename (atomic) leaves one complete, valid state on disk.
 	f, err := os.CreateTemp(dir, filepath.Base(s.path)+".tmp")
 	if err != nil {
-		return fmt.Errorf("persist: creating temp file: %w", err)
+		return fmt.Errorf("persist: cannot create temp file: %w", err)
 	}
 	tmpPath := f.Name()
 
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("persist: writing temp file: %w", err)
+		return fmt.Errorf("persist: cannot write temp file: %w", err)
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("persist: syncing temp file: %w", err)
+		return fmt.Errorf("persist: cannot sync temp file: %w", err)
 	}
 	if err := f.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("persist: closing temp file: %w", err)
+		return fmt.Errorf("persist: cannot close temp file: %w", err)
 	}
 
 	// Keep the previous good state as a backup, mirroring Python's Persist, so a
 	// truncated write or disk corruption is recoverable rather than fatal.
 	if existing, err := os.ReadFile(s.path); err == nil {
 		if err := os.WriteFile(s.path+".old", existing, 0600); err != nil {
-			log.Printf("persist: writing backup: %v", err)
+			slog.Warn("persist: cannot write backup", "error", err)
 		}
 	}
 
 	if err := os.Rename(tmpPath, s.path); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("persist: renaming temp file: %w", err)
+		return fmt.Errorf("persist: cannot rename temp file: %w", err)
 	}
 	return nil
 }
@@ -185,7 +185,7 @@ func (p *PluginStateAccessor) ensureLoaded() error {
 	}
 	state, err := p.store.Load()
 	if err != nil {
-		return fmt.Errorf("persist: loading state for plugin %q: %w", p.key, err)
+		return fmt.Errorf("persist: cannot load state for plugin %q: %w", p.key, err)
 	}
 	p.cached = state
 	return nil
@@ -202,7 +202,7 @@ func (p *PluginStateAccessor) GetPluginState(v any) error {
 		return nil
 	}
 	if err := json.Unmarshal(raw, v); err != nil {
-		return fmt.Errorf("persist: decoding plugin state for %q: %w", p.key, err)
+		return fmt.Errorf("persist: cannot decode plugin state for %q: %w", p.key, err)
 	}
 	return nil
 }
@@ -214,7 +214,7 @@ func (p *PluginStateAccessor) GetPluginState(v any) error {
 func (p *PluginStateAccessor) SetPluginState(v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
-		return fmt.Errorf("persist: encoding plugin state for %q: %w", p.key, err)
+		return fmt.Errorf("persist: cannot encode plugin state for %q: %w", p.key, err)
 	}
 	var updated *State
 	err = p.store.Update(func(latest *State) error {
@@ -229,7 +229,7 @@ func (p *PluginStateAccessor) SetPluginState(v any) error {
 		// Never "recover" a failed save by writing older data: p.cached is a
 		// whole-State snapshot from plugin start, so writing it rolls back
 		// SecureID and OutboundSequence written by the exchange since.
-		return fmt.Errorf("persist: saving plugin state for %q: %w", p.key, err)
+		return fmt.Errorf("persist: cannot save plugin state for %q: %w", p.key, err)
 	}
 	p.cached = updated
 	return nil

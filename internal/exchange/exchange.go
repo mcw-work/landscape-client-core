@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
+	"maps"
 	"math/rand"
 	"os"
 	"runtime/debug"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -164,10 +164,10 @@ func (e *Exchange) persistQueue() {
 	e.mu.Unlock()
 
 	if dropped > 0 {
-		log.Printf("exchange: queue full; dropped %d oldest telemetry message(s), operation results retained", dropped)
+		slog.Warn("exchange: queue full, dropped oldest telemetry messages, operation results retained", "dropped", dropped)
 	}
 	if err := e.spool.save(snapshot); err != nil {
-		log.Printf("exchange: %v", err)
+		slog.Warn("exchange: cannot save spool", "error", err)
 	}
 }
 
@@ -193,7 +193,7 @@ func (e *Exchange) InsecureID() string {
 func (e *Exchange) Run(ctx context.Context) error {
 	state, err := e.store.Load()
 	if err != nil {
-		return fmt.Errorf("exchange: loading state: %w", err)
+		return fmt.Errorf("exchange: cannot load state: %w", err)
 	}
 
 	var timer *time.Timer
@@ -215,12 +215,12 @@ func (e *Exchange) Run(ctx context.Context) error {
 	if e.spool != nil {
 		restored, err := e.spool.load()
 		if err != nil {
-			log.Printf("exchange: %v", err)
+			slog.Warn("exchange: cannot load spool", "error", err)
 		} else if len(restored) > 0 {
 			e.mu.Lock()
 			e.pending = append(restored, e.pending...)
 			e.mu.Unlock()
-			log.Printf("exchange: restored %d queued message(s) from the spool", len(restored))
+			slog.Info("exchange: restored queued messages from the spool", "count", len(restored))
 		}
 	}
 
@@ -234,16 +234,16 @@ func (e *Exchange) Run(ctx context.Context) error {
 		// success and error paths.
 		e.persistQueue()
 		if err != nil {
-			log.Printf("exchange: exchange failed: %v", err)
+			slog.Warn("exchange: exchange failed", "error", err)
 			var httpErr *transport.HTTPError
 			if errors.As(err, &httpErr) {
 				if httpErr.StatusCode == 404 {
 					// An older server does not know this API version. Python drops
 					// to the previous version rather than failing permanently.
 					if downgraded := previousAPIVersion(apiVersion); downgraded != "" {
-						log.Printf("exchange: server returned 404; downgrading API %s -> %s", apiVersion, downgraded)
+						slog.Warn("exchange: server returned 404, downgrading API", "from", apiVersion, "to", downgraded)
 					} else {
-						log.Printf("exchange: server returned 404 (unknown API version %s); no earlier version to downgrade to", apiVersion)
+						slog.Warn("exchange: server returned 404 for unknown API version, no earlier version to downgrade to", "api_version", apiVersion)
 					}
 				}
 				bo.failure(httpErr.StatusCode)
@@ -269,7 +269,7 @@ func (e *Exchange) Run(ctx context.Context) error {
 		// returning 503 should not be polled at the urgent interval just because
 		// an operation result is queued.
 		if d := bo.current(); d > interval {
-			log.Printf("exchange: backing off for %v after server errors", d)
+			slog.Warn("exchange: backing off after server errors", "duration", d)
 			interval = d
 		}
 
@@ -294,7 +294,7 @@ func (e *Exchange) Run(ctx context.Context) error {
 			graceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := e.performExchange(graceCtx, state); err != nil {
-				log.Printf("exchange: final drain exchange failed: %v", err)
+				slog.Warn("exchange: final drain exchange failed", "error", err)
 			}
 			// Persist whatever remains so a shutdown (including a snap refresh)
 			// does not drop unsent messages.
@@ -400,18 +400,15 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		e.mu.Lock()
 		e.pending = slices.Insert(e.pending, 0, regMsg)
 		e.mu.Unlock()
-		log.Printf("exchange: sending registration request (account=%q title=%q key-set=%v)",
-			e.cfg.AccountName, e.cfg.ComputerTitle, e.cfg.RegistrationKey != "")
+		slog.Info("exchange: sending registration request",
+			"account", e.cfg.AccountName, "title", e.cfg.ComputerTitle, "key_set", e.cfg.RegistrationKey != "")
 	}
 
 	// Drain at most maxMessagesPerExchange, matching Python's max_messages. A
 	// restored spool after a long outage would otherwise produce one enormous
 	// request.
 	e.mu.Lock()
-	n := len(e.pending)
-	if n > maxMessagesPerExchange {
-		n = maxMessagesPerExchange
-	}
+	n := min(len(e.pending), maxMessagesPerExchange)
 	snapshot := make([]Message, n)
 	copy(snapshot, e.pending[:n])
 	e.pending = e.pending[n:]
@@ -439,7 +436,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		}
 		if len(filtered) != len(snapshot) {
 			dropped := len(snapshot) - len(filtered)
-			log.Printf("exchange: dropped %d message(s) with types not in server accepted list", dropped)
+			slog.Warn("exchange: dropped messages with types not in server accepted list", "dropped", dropped)
 		}
 		snapshot = filtered
 	}
@@ -458,7 +455,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 				outTypes = append(outTypes, t)
 			}
 		}
-		log.Printf("exchange: sending %d message(s): %v", len(snapshot), outTypes)
+		slog.Debug("exchange: sending messages", "count", len(snapshot), "types", outTypes)
 	}
 
 	// Assemble the exchange payload.
@@ -480,7 +477,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			clientTypes = append(clientTypes, t)
 		}
 		e.mu.Unlock()
-		sort.Strings(clientTypes)
+		slices.Sort(clientTypes)
 		typesAny := make([]any, len(clientTypes))
 		for i, t := range clientTypes {
 			typesAny[i] = t
@@ -491,7 +488,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	// Marshal payload.
 	body, err := bpickle.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("exchange: marshaling payload: %w", err)
+		return fmt.Errorf("exchange: cannot marshal payload: %w", err)
 	}
 
 	// Build request headers.
@@ -514,13 +511,13 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		e.mu.Lock()
 		e.pending = slices.Insert(e.pending, 0, snapshot...)
 		e.mu.Unlock()
-		return fmt.Errorf("exchange: posting to server: %w", err)
+		return fmt.Errorf("exchange: cannot post to server: %w", err)
 	}
 
 	// Decode response.
 	rawResponse, err := bpickle.Unmarshal(responseBytes)
 	if err != nil {
-		return fmt.Errorf("exchange: unmarshaling response: %w", err)
+		return fmt.Errorf("exchange: cannot unmarshal response: %w", err)
 	}
 	response, ok := rawResponse.(map[string]any)
 	if !ok {
@@ -529,13 +526,15 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 
 	// Log the inbound messages for debugging.
 	inbound := extractMessages(response)
-	log.Printf("exchange: client-seq=%d server-client-seq=%d server-ack=%v",
-		state.OutboundSequence, state.NextExpectedFromServer, response["next-expected-sequence"])
+	slog.Debug("exchange: sequence status",
+		"client_sequence", state.OutboundSequence,
+		"server_client_sequence", state.NextExpectedFromServer,
+		"server_ack", response["next-expected-sequence"])
 	if len(inbound) == 0 {
-		log.Printf("exchange: server response: no messages")
+		slog.Debug("exchange: server response: no messages")
 	} else {
 		for _, m := range inbound {
-			log.Printf("exchange: server message: type=%q", m["type"])
+			slog.Debug("exchange: server message", "type", m["type"])
 		}
 	}
 
@@ -550,16 +549,15 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	// If the server's ACK is below what we just sent, re-enqueue un-ACK'd messages
 	// so they are retransmitted at the correct sequence on the next exchange.
 	if serverACK < sentUpTo {
-		nAcked := int(serverACK - state.OutboundSequence)
-		if nAcked < 0 {
-			nAcked = 0
-		}
+		nAcked := max(int(serverACK-state.OutboundSequence), 0)
 		if nAcked < len(snapshot) {
 			e.mu.Lock()
 			e.pending = slices.Insert(e.pending, 0, snapshot[nAcked:]...)
 			e.mu.Unlock()
-			log.Printf("exchange: server ACK'd %d/%d messages (our seq=%d, server wants=%d); re-queuing %d",
-				nAcked, len(snapshot), state.OutboundSequence, serverACK, len(snapshot)-nAcked)
+			slog.Info("exchange: server ACK'd fewer messages than sent, re-queuing",
+				"acked", nAcked, "sent", len(snapshot),
+				"our_sequence", state.OutboundSequence, "server_expects", serverACK,
+				"requeued", len(snapshot)-nAcked)
 		}
 	}
 	state.OutboundSequence = serverACK
@@ -613,7 +611,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			e.mu.Lock()
 			e.insecureID = state.InsecureID
 			e.mu.Unlock()
-			log.Printf("exchange: registered successfully (secure-id=%q insecure-id=%q)", state.SecureID, state.InsecureID)
+			slog.Info("exchange: registered successfully", "secure_id", state.SecureID, "insecure_id", state.InsecureID)
 		case "accepted-types":
 			if v, ok := msg["types"]; ok {
 				if l, ok := v.([]any); ok {
@@ -628,7 +626,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 					}
 					state.AcceptedTypes = types
 					state.AcceptedTypesHash = hashTypes(types)
-					log.Printf("exchange: accepted-types: %d types", len(types))
+					slog.Info("exchange: received accepted-types", "count", len(types))
 				}
 			}
 		case "resynchronize":
@@ -645,21 +643,21 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			e.mu.Lock()
 			e.pending = slices.Insert(e.pending, 0, resyncAck)
 			e.mu.Unlock()
-			log.Printf("exchange: received resynchronize from server, queuing ack")
+			slog.Info("exchange: received resynchronize from server, queuing ack")
 		case "unknown-id":
-			log.Printf("exchange: server does not recognize our identity, clearing IDs to re-register")
+			slog.Warn("exchange: server does not recognize our identity, clearing IDs to re-register")
 			state.SecureID = ""
 			state.InsecureID = ""
 		case "registration":
 			info, _ := msgBytes(msg["info"])
 			switch info {
 			case "unknown-account", "max-pending-computers":
-				log.Printf("exchange: registration failed: %s", info)
+				slog.Warn("exchange: registration failed", "info", info)
 			default:
-				log.Printf("exchange: registration pending (info=%q)", info)
+				slog.Info("exchange: registration pending", "info", info)
 			}
 		case "registration-complete":
-			log.Printf("exchange: registration complete")
+			slog.Info("exchange: registration complete")
 		}
 
 		if !isSpecialMessageType(msgType) {
@@ -669,16 +667,15 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			e.mu.Unlock()
 
 			if len(handlers) == 0 {
-				log.Printf("exchange: no handler for message type %q", msgType)
+				slog.Warn("exchange: no handler for message type", "type", msgType)
 				continue
 			}
 			for _, h := range handlers {
-				h := h
 				msg := msg
 				go func() {
 					defer func() {
 						if rec := recover(); rec != nil {
-							log.Printf("exchange: handler panic type=%q: %v\n%s", msgType, rec, debug.Stack())
+							slog.Error("exchange: handler panicked", "type", msgType, "panic", rec, "stack", string(debug.Stack()))
 						}
 					}()
 					h(handlerCtx, msg)
@@ -694,9 +691,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		if mergedPluginState == nil {
 			mergedPluginState = make(map[string]json.RawMessage)
 		}
-		for k, v := range current.PluginState {
-			mergedPluginState[k] = v
-		}
+		maps.Copy(mergedPluginState, current.PluginState)
 
 		current.SecureID = state.SecureID
 		current.InsecureID = state.InsecureID
@@ -710,7 +705,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 
 		return nil
 	}); err != nil {
-		return fmt.Errorf("exchange: saving state: %w", err)
+		return fmt.Errorf("exchange: cannot save state: %w", err)
 	}
 
 	// If messages are still queued (capped backlog or a re-queue), wake the loop

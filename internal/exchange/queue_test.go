@@ -64,7 +64,7 @@ func TestSpool_CorruptFileIsEmptyNotAnError(t *testing.T) {
 func TestEnforceQueueBound_DropsOldestTelemetryFirst(t *testing.T) {
 	msgs := make([]Message, 0, maxQueuedMessages+10)
 	// Oldest telemetry first, then a result, then more telemetry.
-	for i := 0; i < maxQueuedMessages+9; i++ {
+	for i := range maxQueuedMessages + 9 {
 		msgs = append(msgs, Message{"type": "cpu-usage", "n": int64(i)})
 	}
 	msgs = append(msgs, Message{"type": "operation-result", "operation-id": int64(7)})
@@ -96,7 +96,7 @@ func TestEnforceQueueBound_DropsOldestTelemetryFirst(t *testing.T) {
 
 func TestEnforceQueueBound_NeverDropsResultsEvenWhenFull(t *testing.T) {
 	msgs := make([]Message, 0, maxQueuedMessages+5)
-	for i := 0; i < maxQueuedMessages+5; i++ {
+	for i := range maxQueuedMessages + 5 {
 		msgs = append(msgs, Message{"type": "operation-result", "operation-id": int64(i)})
 	}
 

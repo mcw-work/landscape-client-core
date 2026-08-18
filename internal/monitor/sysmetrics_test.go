@@ -373,7 +373,7 @@ func TestTemperature_ZoneOrderIsDeterministic(t *testing.T) {
 	}
 
 	var orders [][]string
-	for run := 0; run < 5; run++ {
+	for range 5 {
 		p := &Temperature{interval: 5 * time.Millisecond, sysfsPath: dir}
 		sink := &mockSink{}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)

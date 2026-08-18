@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -135,13 +136,7 @@ func TestWizard_RequiredFieldReprompt(t *testing.T) {
 	if !strings.Contains(out.String(), "Account name is required.") {
 		t.Errorf("expected reprompt message, output was:\n%s", out.String())
 	}
-	found := false
-	for _, c := range m.setCalls {
-		if c == "account-name=myaccount" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(m.setCalls, "account-name=myaccount")
 	if !found {
 		t.Errorf("expected account-name=myaccount in Set calls: %v", m.setCalls)
 	}
@@ -161,13 +156,7 @@ func TestWizard_RegistrationKeyMismatch(t *testing.T) {
 	if !strings.Contains(out.String(), "Keys must match.") {
 		t.Errorf("expected mismatch message, output was:\n%s", out.String())
 	}
-	found := false
-	for _, c := range m.setCalls {
-		if c == "registration-key=key3" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(m.setCalls, "registration-key=key3")
 	if !found {
 		t.Errorf("expected registration-key=key3 in Set calls: %v", m.setCalls)
 	}
@@ -264,13 +253,7 @@ func TestWizard_TagValidation(t *testing.T) {
 	if !strings.Contains(out.String(), "Invalid tag") {
 		t.Errorf("expected invalid tag message, output was:\n%s", out.String())
 	}
-	found := false
-	for _, c := range m.setCalls {
-		if c == "tags=webservers" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(m.setCalls, "tags=webservers")
 	if !found {
 		t.Errorf("expected tags=webservers in Set calls: %v", m.setCalls)
 	}

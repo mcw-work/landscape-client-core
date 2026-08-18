@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,7 +38,7 @@ func dbusShutdown(ctx context.Context, reboot bool) error {
 	// godbus v5.2.2 has no ConnectSystemBusWithContext; WithContext binds ctx to the conn.
 	conn, err := dbus.ConnectSystemBus(dbus.WithContext(ctx))
 	if err != nil {
-		return fmt.Errorf("connecting to system bus: %w", err)
+		return fmt.Errorf("cannot connect to system bus: %w", err)
 	}
 	defer func() {
 		_ = conn.Close()
@@ -84,11 +84,11 @@ func (h *ShutdownHandler) Handle(ctx context.Context, msg exchange.Message, resu
 	if reboot {
 		action = "reboot"
 	}
-	log.Printf("shutdown: requesting %s via DBus", action)
+	slog.Info("shutdown: requesting via DBus", "action", action)
 	dbusCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := h.Shutdown(dbusCtx, reboot); err != nil {
-		log.Printf("shutdown: %s failed: %v", action, err)
+		slog.Error("shutdown: request failed", "action", action, "error", err)
 		_ = result.SendResult(ctx, opID, exchange.StatusFailed, err.Error())
 	}
 	return nil
@@ -195,7 +195,7 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 
 	// username switching is unsupported under strict confinement — log and ignore.
 	if username, _ := getString(msg, "username"); username != "" {
-		log.Printf("execute-script: username switching not supported under strict confinement, ignoring username %q", username)
+		slog.Warn("execute-script: username switching not supported under strict confinement, ignoring username", "username", username)
 	}
 
 	// os.Stat passes for directories and non-executable files, which then fail
@@ -278,7 +278,7 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 	}
 
 	// Run the script.
-	log.Printf("execute-script: op=%d interpreter=%q script=%q time-limit=%d", opID, interpreter, scriptPath, timeLimit)
+	slog.Info("execute-script: running", "op", opID, "interpreter", interpreter, "script", scriptPath, "time_limit", timeLimit)
 	cmd := exec.CommandContext(execCtx, interpreterBin, append(interpreterArgs, scriptPath)...)
 	// Run the script in its own process group so a timeout kills grandchildren
 	// too. Without this they survive as orphans holding the stdout pipe, which
@@ -314,7 +314,7 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 	// field in the operation-result message is always valid UTF-8 so the
 	// Landscape server can parse the exchange payload without error.
 	output := strings.ToValidUTF8(buf.String(), string(utf8.RuneError))
-	log.Printf("execute-script: op=%d run complete: err=%v output-bytes=%d", opID, runErr, len(output))
+	slog.Info("execute-script: run complete", "op", opID, "error", runErr, "output_bytes", len(output))
 
 	if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
 		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 102, output)

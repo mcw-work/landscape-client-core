@@ -3,7 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -44,7 +44,7 @@ func (p *Temperature) Run(ctx context.Context, sink exchange.MessageSink, _ *per
 		p.beat(p.Name())
 		zones, err := p.readZones()
 		if err != nil {
-			log.Printf("temperature: %v", err)
+			slog.Warn("temperature: cannot read zones", "error", err)
 			return
 		}
 		// Iterate a sorted slice: ranging the map emitted zones in a different
@@ -61,7 +61,7 @@ func (p *Temperature) Run(ctx context.Context, sink exchange.MessageSink, _ *per
 				"temperatures": []any{bpickle.Tuple{t.Unix(), zones[zone]}},
 			}
 			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("temperature: send: %v", err)
+				slog.Warn("temperature: send failed", "error", err)
 			}
 		}
 	})
@@ -75,7 +75,7 @@ func (p *Temperature) readZones() (map[string]float64, error) {
 	pattern := filepath.Join(p.sysfsPath, "thermal_zone*")
 	dirs, err := filepath.Glob(pattern)
 	if err != nil {
-		return nil, fmt.Errorf("globbing %s: %w", pattern, err)
+		return nil, fmt.Errorf("cannot glob %s: %w", pattern, err)
 	}
 	zones := make(map[string]float64, len(dirs))
 	for _, dir := range dirs {

@@ -10,7 +10,7 @@ package ping
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/url"
 	"sync/atomic"
 	"time"
@@ -85,11 +85,11 @@ func (p *Pinger) Run(ctx context.Context) error {
 
 		hasMessages, err := p.doPing(ctx, insecureID)
 		if err != nil {
-			log.Printf("ping: error contacting ping server at %s: %v", p.pingURL, err)
+			slog.Warn("ping: error contacting ping server", "url", p.pingURL, "error", err)
 			continue
 		}
 		if hasMessages {
-			log.Printf("ping: server has messages waiting, triggering urgent exchange")
+			slog.Debug("ping: server has messages waiting, triggering urgent exchange")
 			p.triggerExchange()
 		}
 	}
@@ -110,7 +110,7 @@ func (p *Pinger) doPing(ctx context.Context, insecureID string) (bool, error) {
 
 	raw, err := bpickle.Unmarshal(respBytes)
 	if err != nil {
-		return false, fmt.Errorf("decoding response: %w", err)
+		return false, fmt.Errorf("cannot decode response: %w", err)
 	}
 
 	m, ok := raw.(map[string]any)

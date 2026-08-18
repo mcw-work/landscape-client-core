@@ -533,7 +533,7 @@ func TestUrgentInterval(t *testing.T) {
 	// (next-expected-sequence stays 0), so performExchange re-queues it and it
 	// remains pending after each exchange, keeping hasUrgentPendingLocked true.
 	_ = ts.ex.Send(context.Background(), Message{"type": "operation-result", "operation-id": int64(1)})
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		ts.fs.push(map[string]any{
 			"messages":               []any{},
 			"next-expected-sequence": int64(0),
@@ -776,7 +776,7 @@ func TestPerformExchange_HandlerDispatchDoesNotFailExchange(t *testing.T) {
 // fix: 24 sends produced 24 exchanges with a 1-hour interval configured.
 func TestSend_DoesNotForceAnExchange(t *testing.T) {
 	srv := &fakeServer{}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		srv.push(map[string]any{
 			"next-expected-sequence": int64(0),
 			"next-exchange-token":    "tok",
@@ -813,7 +813,7 @@ func TestSend_DoesNotForceAnExchange(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	baseline := srv.count()
 
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		if err := exc.Send(ctx, Message{"type": "cpu-usage"}); err != nil {
 			t.Fatalf("Send: %v", err)
 		}
@@ -834,7 +834,7 @@ func TestSend_DoesNotForceAnExchange(t *testing.T) {
 // until the next scheduled exchange — the server is waiting on those.
 func TestSendUrgent_TriggersAnExchange(t *testing.T) {
 	srv := &fakeServer{}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		srv.push(map[string]any{
 			"next-expected-sequence": int64(0),
 			"next-exchange-token":    "tok",
@@ -906,7 +906,7 @@ func TestBackoff_EscalatesOn5xx(t *testing.T) {
 		t.Errorf("backoff should escalate: first=%v second=%v", first, second)
 	}
 
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		b.failure(503)
 	}
 	// current() adds up to 20% jitter on top of the capped base delay, so the
@@ -948,7 +948,7 @@ func TestBackoff_IgnoresClientErrors(t *testing.T) {
 
 func TestBackoff_JitterVaries(t *testing.T) {
 	seen := make(map[time.Duration]bool)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		b := newBackoff()
 		b.failure(500)
 		seen[b.current()] = true
@@ -962,7 +962,7 @@ func TestBackoff_JitterVaries(t *testing.T) {
 // across several exchanges rather than sent as one enormous request.
 func TestPerformExchange_CapsMessagesPerRequest(t *testing.T) {
 	srv := &fakeServer{}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		srv.push(map[string]any{
 			// ACK the 100 messages sent in the first exchange so they are not
 			// re-queued; only the un-sent remainder must stay queued.
@@ -988,7 +988,7 @@ func TestPerformExchange_CapsMessagesPerRequest(t *testing.T) {
 	cfg := &config.Config{URL: ts.URL, AccountName: "acc"}
 	exc := New(cfg, store, tc)
 
-	for i := 0; i < 250; i++ {
+	for range 250 {
 		if err := exc.Send(context.Background(), Message{"type": "cpu-usage"}); err != nil {
 			t.Fatalf("Send: %v", err)
 		}

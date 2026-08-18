@@ -2,7 +2,7 @@ package monitor
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
@@ -60,7 +60,7 @@ func (p *SnapPackagesPlugin) send(ctx context.Context, sink exchange.MessageSink
 		},
 	}
 	if err := sink.Send(ctx, msg); err != nil {
-		log.Printf("snaps: send: %v", err)
+		slog.Warn("snaps: send failed", "error", err)
 	}
 }
 
@@ -71,7 +71,7 @@ func (p *SnapPackagesPlugin) collect(ctx context.Context) []any {
 	snaps, err := p.snapdClient.ListSnaps(callCtx)
 	cancel()
 	if err != nil {
-		log.Printf("snaps: listing snaps: %v", err)
+		slog.Warn("snaps: cannot list snaps", "error", err)
 		return []any{}
 	}
 	result := make([]any, 0, len(snaps))

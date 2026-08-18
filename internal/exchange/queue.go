@@ -3,7 +3,7 @@ package exchange
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -41,7 +41,7 @@ func (s *spool) load() ([]Message, error) {
 
 	var msgs []Message
 	if err := json.Unmarshal(data, &msgs); err != nil {
-		log.Printf("exchange: message spool %s is corrupt (%v); starting with an empty queue", s.path, err)
+		slog.Warn("exchange: message spool is corrupt, starting with an empty queue", "path", s.path, "error", err)
 		return nil, nil
 	}
 	// json.Unmarshal decodes every number as float64, but bpickle encodes

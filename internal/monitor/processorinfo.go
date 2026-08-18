@@ -5,9 +5,9 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"runtime"
 	"slices"
@@ -48,7 +48,7 @@ func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, stat
 		if err := state.GetPluginState(&saved); err != nil {
 			// Zero state is not equivalent to "no changes yet": for users it
 			// re-sends every account as a create.
-			log.Printf("%s: loading state: %v; treating as first run", p.Name(), err)
+			slog.Warn("processor-info: cannot load state, treating as first run", "error", err)
 		}
 	}
 
@@ -72,17 +72,18 @@ func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, stat
 		})
 		data, err := json.Marshal(processors)
 		if err != nil {
-			log.Printf("processor-info: marshal: %v", err)
+			slog.Warn("processor-info: cannot marshal", "error", err)
 			return
 		}
-		hash := fmt.Sprintf("%x", sha256.Sum256(data))
+		sum := sha256.Sum256(data)
+		hash := hex.EncodeToString(sum[:])
 		if hash == saved.Hash {
 			return
 		}
 		saved.Hash = hash
 		if state != nil {
 			if err := state.SetPluginState(saved); err != nil {
-				log.Printf("processor-info: saving state: %v", err)
+				slog.Error("processor-info: cannot save state", "error", err)
 			}
 		}
 		msg := exchange.Message{
@@ -90,7 +91,7 @@ func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, stat
 			"processors": processors,
 		}
 		if err := sink.Send(ctx, msg); err != nil {
-			log.Printf("processor-info: send: %v", err)
+			slog.Warn("processor-info: send failed", "error", err)
 		}
 	}
 
@@ -115,7 +116,7 @@ func (p *ProcessorInfo) parseProcessors() []map[string]any {
 func (p *ProcessorInfo) parseX86() []map[string]any {
 	f, err := os.Open(p.cpuinfoPath)
 	if err != nil {
-		log.Printf("processor-info: opening %s: %v", p.cpuinfoPath, err)
+		slog.Warn("processor-info: cannot open cpuinfo", "path", p.cpuinfoPath, "error", err)
 		return nil
 	}
 	defer func() {
@@ -127,12 +128,12 @@ func (p *ProcessorInfo) parseX86() []map[string]any {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
+		rawKey, rawValue, ok := strings.Cut(line, ":")
+		if !ok {
 			continue
 		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
+		key := strings.TrimSpace(rawKey)
+		value := strings.TrimSpace(rawValue)
 		switch key {
 		case "processor":
 			id, err := strconv.Atoi(value)
@@ -166,7 +167,7 @@ func (p *ProcessorInfo) parseX86() []map[string]any {
 func (p *ProcessorInfo) parseARM64() []map[string]any {
 	f, err := os.Open(p.cpuinfoPath)
 	if err != nil {
-		log.Printf("processor-info: opening %s: %v", p.cpuinfoPath, err)
+		slog.Warn("processor-info: cannot open cpuinfo", "path", p.cpuinfoPath, "error", err)
 		return nil
 	}
 	defer func() {
@@ -196,12 +197,12 @@ func (p *ProcessorInfo) parseARM64() []map[string]any {
 			finalize()
 			continue
 		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
+		rawKey, rawValue, ok := strings.Cut(line, ":")
+		if !ok {
 			continue
 		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
+		key := strings.TrimSpace(rawKey)
+		value := strings.TrimSpace(rawValue)
 		switch key {
 		case "processor":
 			id, err := strconv.Atoi(value)

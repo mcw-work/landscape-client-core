@@ -345,7 +345,7 @@ func (w *wizard) Run() error {
 			break
 		}
 		valid := true
-		for _, part := range strings.Split(tags, ",") {
+		for part := range strings.SplitSeq(tags, ",") {
 			t := strings.TrimSpace(part)
 			if t != "" && !validateTag(t) {
 				if _, err := fmt.Fprintf(w.io.out,

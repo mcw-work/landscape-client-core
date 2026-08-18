@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -47,7 +47,7 @@ func (p *CPUUsage) Interval() time.Duration { return p.interval }
 func (p *CPUUsage) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	// Prime the baseline before starting the ticker.
 	if _, err := p.sample(); err != nil {
-		log.Printf("cpu-usage: priming baseline: %v", err)
+		slog.Warn("cpu-usage: cannot prime baseline", "error", err)
 	}
 
 	acc := newAccumulator(p.sendInterval, time.Now)
@@ -56,7 +56,7 @@ func (p *CPUUsage) Run(ctx context.Context, sink exchange.MessageSink, _ *persis
 		p.beat(p.Name())
 		usage, err := p.sample()
 		if err != nil {
-			log.Printf("cpu-usage: %v", err)
+			slog.Warn("cpu-usage: cannot sample", "error", err)
 			return
 		}
 		if usage < 0 {
@@ -74,7 +74,7 @@ func (p *CPUUsage) Run(ctx context.Context, sink exchange.MessageSink, _ *persis
 			"cpu-usages": points,
 		}
 		if err := sink.Send(ctx, msg); err != nil {
-			log.Printf("cpu-usage: send: %v", err)
+			slog.Warn("cpu-usage: send failed", "error", err)
 		}
 	})
 	return nil
@@ -85,7 +85,7 @@ func (p *CPUUsage) Run(ctx context.Context, sink exchange.MessageSink, _ *persis
 func (p *CPUUsage) sample() (float64, error) {
 	f, err := os.Open(p.procStatPath)
 	if err != nil {
-		return 0, fmt.Errorf("opening %s: %w", p.procStatPath, err)
+		return 0, fmt.Errorf("cannot open %s: %w", p.procStatPath, err)
 	}
 	defer func() {
 		_ = f.Close()
@@ -93,7 +93,7 @@ func (p *CPUUsage) sample() (float64, error) {
 
 	scanner := bufio.NewScanner(f)
 	if !scanner.Scan() {
-		return 0, fmt.Errorf("reading first line of %s", p.procStatPath)
+		return 0, fmt.Errorf("cannot read first line of %s", p.procStatPath)
 	}
 	// Line format: "cpu  user nice system idle iowait irq softirq steal guest guest_nice"
 	fields := strings.Fields(scanner.Text())
@@ -105,14 +105,14 @@ func (p *CPUUsage) sample() (float64, error) {
 	for _, s := range fields[1:] {
 		v, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("parsing field in %s: %w", p.procStatPath, err)
+			return 0, fmt.Errorf("cannot parse field in %s: %w", p.procStatPath, err)
 		}
 		total += v
 	}
 	// fields[4] is the idle counter (user=1, nice=2, system=3, idle=4).
 	idle, err := strconv.ParseInt(fields[4], 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("parsing idle from %s: %w", p.procStatPath, err)
+		return 0, fmt.Errorf("cannot parse idle from %s: %w", p.procStatPath, err)
 	}
 
 	if !p.hasPrev {

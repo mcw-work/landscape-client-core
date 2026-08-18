@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -197,6 +197,7 @@ func TestScriptExecHandler_Failure(t *testing.T) {
 }
 
 func TestScriptExecHandler_TimeLimit(t *testing.T) {
+	t.Parallel()
 	sink := &mockResultSink{}
 	h := manager.NewScriptExecHandler(t.TempDir(), nil)
 
@@ -255,8 +256,9 @@ func TestScriptExecHandler_OutputTruncated(t *testing.T) {
 
 func TestScriptExecHandler_UsernameWarning(t *testing.T) {
 	var logBuf bytes.Buffer
-	log.SetOutput(&logBuf)
-	defer log.SetOutput(os.Stderr)
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prev)
 
 	sink := &mockResultSink{}
 	h := manager.NewScriptExecHandler(t.TempDir(), nil)
@@ -376,6 +378,7 @@ func TestScriptExecHandler_BadInterpreter(t *testing.T) {
 }
 
 func TestScriptExecHandler_TimeoutResultCode(t *testing.T) {
+	t.Parallel()
 	sink := &mockResultSink{}
 	h := manager.NewScriptExecHandler(t.TempDir(), nil)
 
@@ -407,6 +410,7 @@ func TestScriptExecHandler_TimeoutResultCode(t *testing.T) {
 // also leaves no orphan: it would touch a marker file after the WaitDelay if it
 // survived, so the marker's absence proves the process group was reaped.
 func TestScriptExec_TimeLimitKillsProcessGroup(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "orphan-marker")
 	h := manager.NewScriptExecHandler(dir, nil)
@@ -438,7 +442,9 @@ func TestScriptExec_TimeLimitKillsProcessGroup(t *testing.T) {
 	}
 
 	// Wait past the child's 7s touch to prove it was killed with its group,
-	// not merely detached from the reaped shell.
+	// not merely detached from the reaped shell. The process group is reaped by
+	// cmd.WaitDelay (5s), so the child must outlive that window for the test to
+	// distinguish a real group-kill from the child simply finishing first.
 	for time.Since(start) < 9*time.Second {
 		if _, err := os.Stat(marker); err == nil {
 			t.Fatal("orphaned background child survived the time-limit: it created its marker after the process group should have been reaped")
@@ -450,6 +456,7 @@ func TestScriptExec_TimeLimitKillsProcessGroup(t *testing.T) {
 // TestScriptExec_TimeLimitPreservesPartialOutput guards behaviour that is
 // already correct and must not regress.
 func TestScriptExec_TimeLimitPreservesPartialOutput(t *testing.T) {
+	t.Parallel()
 	h := manager.NewScriptExecHandler(t.TempDir(), nil)
 	sink := &mockResultSink{}
 
