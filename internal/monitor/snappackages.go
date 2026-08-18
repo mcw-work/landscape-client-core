@@ -14,6 +14,7 @@ import (
 // A full list is sent on every tick (not a diff). Message type and fields
 // match the Python snaps plugin exactly.
 type SnapPackagesPlugin struct {
+	heartbeatSource
 	interval    time.Duration
 	snapdClient snapd.Client
 }
@@ -29,6 +30,8 @@ func NewSnapPackages(client snapd.Client) *SnapPackagesPlugin {
 // Name returns the Landscape message type string.
 func (p *SnapPackagesPlugin) Name() string { return "snaps" }
 
+func (p *SnapPackagesPlugin) Interval() time.Duration { return p.interval }
+
 // Run starts the periodic snap list collection loop. A full installed list is
 // sent on every tick. On snapd error the message is sent with an empty
 // installed list to keep the server in sync.
@@ -41,6 +44,7 @@ func (p *SnapPackagesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			p.send(ctx, sink)
 		}
 	}
@@ -69,7 +73,9 @@ func (p *SnapPackagesPlugin) send(ctx context.Context, sink exchange.MessageSink
 // collect queries snapd for installed snaps and converts them to the wire
 // format. On error it logs and returns an empty slice.
 func (p *SnapPackagesPlugin) collect(ctx context.Context) []any {
-	snaps, err := p.snapdClient.ListSnaps(ctx)
+	callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+	snaps, err := p.snapdClient.ListSnaps(callCtx)
+	cancel()
 	if err != nil {
 		log.Printf("snaps: listing snaps: %v", err)
 		return []any{}

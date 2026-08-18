@@ -30,6 +30,7 @@ type ciSavedState struct {
 }
 
 type ComputerInfo struct {
+	heartbeatSource
 	meminfoPath   string
 	osReleasePath string
 	machineIDPath string
@@ -49,6 +50,8 @@ func NewComputerInfo(client snapd.Client) *ComputerInfo {
 
 func (p *ComputerInfo) Name() string { return "computer-info" }
 
+func (p *ComputerInfo) Interval() time.Duration { return p.interval }
+
 func (p *ComputerInfo) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var prev ciSavedState
 	if state != nil {
@@ -66,6 +69,7 @@ func (p *ComputerInfo) Run(ctx context.Context, sink exchange.MessageSink, state
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			p.tick(ctx, sink, state, &prev)
 		}
 	}
@@ -235,7 +239,9 @@ func (p *ComputerInfo) readSnapAssertions(ctx context.Context) (serial, model, b
 	if p.snapdClient == nil {
 		return
 	}
-	assertions, err := p.snapdClient.GetAssertions(ctx)
+	callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+	assertions, err := p.snapdClient.GetAssertions(callCtx)
+	cancel()
 	if err != nil {
 		log.Printf("computer-info: getting snap assertions: %v", err)
 		return

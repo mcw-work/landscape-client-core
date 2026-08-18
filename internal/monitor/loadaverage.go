@@ -17,6 +17,7 @@ import (
 // LoadAverage monitors system load by reading /proc/loadavg.
 // Field names in messages match the Python loadaverage.py plugin exactly.
 type LoadAverage struct {
+	heartbeatSource
 	procLoadavgPath string
 	interval        time.Duration
 }
@@ -32,6 +33,8 @@ func NewLoadAverage() *LoadAverage {
 // Name returns the Landscape message type string.
 func (p *LoadAverage) Name() string { return "load-average" }
 
+func (p *LoadAverage) Interval() time.Duration { return p.interval }
+
 // Run starts the periodic load average collection loop.
 func (p *LoadAverage) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	ticker := time.NewTicker(p.interval)
@@ -41,6 +44,7 @@ func (p *LoadAverage) Run(ctx context.Context, sink exchange.MessageSink, _ *per
 		case <-ctx.Done():
 			return nil
 		case t := <-ticker.C:
+			p.beat(p.Name())
 			load, err := p.sample()
 			if err != nil {
 				log.Printf("load-average: %v", err)

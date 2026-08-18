@@ -17,6 +17,7 @@ import (
 
 const (
 	defaultConnectTimeout = 30 * time.Second
+	defaultTotalTimeout   = 600 * time.Second
 	contentType           = "application/octet-stream"
 
 	// maxResponseBytes caps successful response bodies to prevent a
@@ -81,6 +82,11 @@ func New(cfg Config) (*Client, error) {
 		connectTimeout = defaultConnectTimeout
 	}
 
+	totalTimeout := cfg.TotalTimeout
+	if totalTimeout == 0 {
+		totalTimeout = defaultTotalTimeout
+	}
+
 	httpProxy := cfg.HTTPProxy
 	httpsProxy := cfg.HTTPSProxy
 
@@ -114,7 +120,7 @@ func New(cfg Config) (*Client, error) {
 	return &Client{
 		httpClient:   httpClient,
 		userAgent:    cfg.UserAgent,
-		totalTimeout: cfg.TotalTimeout,
+		totalTimeout: totalTimeout,
 	}, nil
 }
 

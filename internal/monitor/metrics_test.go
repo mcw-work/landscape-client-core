@@ -318,3 +318,41 @@ func TestLoadAverage_ContextCancel(t *testing.T) {
 		t.Error("Run did not return after context cancel")
 	}
 }
+
+func TestCounterDelta_NormalIncrement(t *testing.T) {
+	if got := counterDelta(2000, 1000); got != 1000 {
+		t.Errorf("want 1000, got %d", got)
+	}
+}
+
+// TestCounterDelta_32BitRollover: on armhf the kernel counter wraps at 2^32, so
+// a negative raw delta with a previous value near MaxUint32 is a wrap, not a
+// reset. Clamping it to zero loses 4 GiB of traffic per interface per wrap.
+func TestCounterDelta_32BitRollover(t *testing.T) {
+	const maxUint32 = int64(1) << 32
+
+	prev := maxUint32 - 1000 // 4294966296
+	now := int64(500)        // wrapped
+
+	want := int64(1500) // 1000 to the wrap point, then 500 more
+	if got := counterDelta(now, prev); got != want {
+		t.Errorf("want %d, got %d", want, got)
+	}
+}
+
+// TestCounterDelta_GenuineReset: an interface re-created from scratch has a low
+// previous value, so a negative delta there is a reset and must still clamp.
+func TestCounterDelta_GenuineReset(t *testing.T) {
+	prev := int64(5000)
+	now := int64(10)
+
+	if got := counterDelta(now, prev); got != 0 {
+		t.Errorf("a genuine counter reset should clamp to 0, got %d", got)
+	}
+}
+
+func TestCounterDelta_NoChange(t *testing.T) {
+	if got := counterDelta(1000, 1000); got != 0 {
+		t.Errorf("want 0, got %d", got)
+	}
+}

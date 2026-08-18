@@ -38,6 +38,7 @@ type usersState struct {
 }
 
 type UserMonitor struct {
+	heartbeatSource
 	passwdPath string
 	groupPath  string
 	interval   time.Duration
@@ -53,10 +54,16 @@ func NewUsers() *UserMonitor {
 
 func (p *UserMonitor) Name() string { return "users" }
 
+func (p *UserMonitor) Interval() time.Duration { return p.interval }
+
 func (p *UserMonitor) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved usersState
 	if state != nil {
-		_ = state.GetPluginState(&saved)
+		if err := state.GetPluginState(&saved); err != nil {
+			// Zero state is not equivalent to "no changes yet": for users it
+			// re-sends every account as a create.
+			log.Printf("%s: loading state: %v; treating as first run", p.Name(), err)
+		}
 	}
 	if saved.Users == nil {
 		saved.Users = make(map[string]userRecord)
@@ -72,15 +79,19 @@ func (p *UserMonitor) Run(ctx context.Context, sink exchange.MessageSink, state 
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			newUsers, err := p.parsePasswd()
 			if err != nil {
-				log.Printf("users: parsing passwd: %v", err)
-				newUsers = make(map[string]userRecord)
+				// An unreadable source file means "unknown", never "empty":
+				// diffing against an empty map tells the server to delete every
+				// user, and persisting it re-creates them all on the next tick.
+				log.Printf("users: parsing passwd: %v; skipping tick", err)
+				continue
 			}
 			newGroups, err := p.parseGroup(newUsers)
 			if err != nil {
-				log.Printf("users: parsing group: %v", err)
-				newGroups = make(map[string]groupRecord)
+				log.Printf("users: parsing group: %v; skipping tick", err)
+				continue
 			}
 			msg := buildUsersDiff(saved.Users, newUsers, saved.Groups, newGroups)
 			if msg != nil {

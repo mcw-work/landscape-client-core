@@ -24,6 +24,7 @@ type snapServicesState struct {
 // previously reported value. Message type and fields match the Python
 // snap-services plugin exactly.
 type SnapServicesPlugin struct {
+	heartbeatSource
 	interval    time.Duration
 	snapdClient snapd.Client
 }
@@ -38,6 +39,8 @@ func NewSnapServices(client snapd.Client) *SnapServicesPlugin {
 
 // Name returns the Landscape message type string.
 func (p *SnapServicesPlugin) Name() string { return "snap-services" }
+
+func (p *SnapServicesPlugin) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic snap services collection loop. A message is emitted
 // only when the services list changes from its previously reported value.
@@ -58,7 +61,10 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			services, err := p.snapdClient.ListServices(ctx)
+			p.beat(p.Name())
+			callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+			services, err := p.snapdClient.ListServices(callCtx)
+			cancel()
 			if err != nil {
 				log.Printf("snap-services: listing services: %v", err)
 				continue
@@ -71,10 +77,15 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 			if hash == prevHash {
 				continue // no change, skip
 			}
-			prevHash = hash
 			if state != nil {
-				_ = state.SetPluginState(snapServicesState{Hash: hash})
+				if err := state.SetPluginState(snapServicesState{Hash: hash}); err != nil {
+					// Do not advance the in-memory hash: if the save failed, the
+					// change must be re-detected and re-sent next tick.
+					log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+					continue
+				}
 			}
+			prevHash = hash
 			running := make([]any, 0, len(services))
 			for _, svc := range services {
 				running = append(running, map[string]any{

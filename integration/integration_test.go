@@ -419,6 +419,8 @@ type fastCPUPlugin struct{}
 
 func (p *fastCPUPlugin) Name() string { return "cpu-usage" }
 
+func (p *fastCPUPlugin) Interval() time.Duration { return time.Second }
+
 func (p *fastCPUPlugin) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	msg := exchange.Message{
 		"type":       "cpu-usage",

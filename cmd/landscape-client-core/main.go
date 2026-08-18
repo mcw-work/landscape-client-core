@@ -20,6 +20,7 @@ import (
 	"github.com/canonical/landscape-client-core/internal/monitor"
 	"github.com/canonical/landscape-client-core/internal/persist"
 	"github.com/canonical/landscape-client-core/internal/ping"
+	"github.com/canonical/landscape-client-core/internal/runcmd"
 	"github.com/canonical/landscape-client-core/internal/snapd"
 	"github.com/canonical/landscape-client-core/internal/transport"
 	"github.com/canonical/landscape-client-core/internal/version"
@@ -159,7 +160,8 @@ func run(ctx context.Context, d deps) error {
 	monRunner := monitor.New(plugins, exc, store)
 
 	// sendSnapUpdate sends an immediate snaps message after a snap operation.
-	sendSnapUpdate := func() { snapPackages.SendNow(context.Background(), exc) }
+	// Uses the daemon context so a snapd call cannot outlive shutdown.
+	sendSnapUpdate := func() { snapPackages.SendNow(ctx, exc) }
 
 	// Create manager runner with all handlers.
 	handlers := []manager.Handler{
@@ -234,6 +236,26 @@ func run(ctx context.Context, d deps) error {
 		}
 		return nil
 	})
+	// Watchdog: restart-condition only covers process exit, so a goroutine
+	// blocked forever in a syscall keeps the daemon alive while silently
+	// reporting nothing. Exiting non-zero lets snapd's restart-condition recover
+	// a wedged daemon.
+	eg.Go(func() error {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-groupCtx.Done():
+				return nil
+			case <-ticker.C:
+				if stale := monRunner.StaleSources(); len(stale) > 0 {
+					slog.Error("watchdog: sources stopped making progress; exiting for restart",
+						"sources", stale)
+					return fmt.Errorf("watchdog: stale sources: %v", stale)
+				}
+			}
+		}
+	})
 
 	groupDone := make(chan error, 1)
 	go func() {
@@ -273,7 +295,9 @@ func run(ctx context.Context, d deps) error {
 type snapctlLoader struct{}
 
 func (s *snapctlLoader) Get(key string) (string, error) {
-	out, err := exec.Command("snapctl", "get", key).Output()
+	// Loader.Get has no context; snapctl is fast and local, so use a fresh
+	// background context with a bounded timeout rather than widening the interface.
+	out, err := runcmd.Run(context.Background(), 30*time.Second, "snapctl", "get", key)
 	if err != nil {
 		return "", fmt.Errorf("snapctl get %s: %w", key, err)
 	}

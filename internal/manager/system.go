@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/godbus/dbus/v5"
+	"golang.org/x/sys/unix"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
 )
@@ -30,8 +31,12 @@ const truncationMarker = "\n**OUTPUT TRUNCATED**"
 // dbusShutdown calls org.freedesktop.login1.Manager Reboot or PowerOff via DBus.
 // interactive is passed as false (non-interactive, matches Python client's True
 // which means "allow polkit interactive auth" — on Ubuntu Core this is fine either way).
-func dbusShutdown(reboot bool) error {
-	conn, err := dbus.ConnectSystemBus()
+// ctx bounds both the bus connection and the method call: an unresponsive logind
+// would otherwise hang this handler indefinitely, and the manager semaphore means
+// a wedged handler eventually starves all manager operations.
+func dbusShutdown(ctx context.Context, reboot bool) error {
+	// godbus v5.2.2 has no ConnectSystemBusWithContext; WithContext binds ctx to the conn.
+	conn, err := dbus.ConnectSystemBus(dbus.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("connecting to system bus: %w", err)
 	}
@@ -46,14 +51,14 @@ func dbusShutdown(reboot bool) error {
 		method = "org.freedesktop.login1.Manager.Reboot"
 	}
 
-	return obj.Call(method, 0, false).Store()
+	return obj.CallWithContext(ctx, method, 0, false).Store()
 }
 
 // ShutdownHandler handles "shutdown" commands.
 type ShutdownHandler struct {
 	// Shutdown is the function used to trigger a shutdown or reboot.
 	// Defaults to dbusShutdown; injectable for testing.
-	Shutdown func(reboot bool) error
+	Shutdown func(ctx context.Context, reboot bool) error
 }
 
 // NewShutdownHandler creates a ShutdownHandler with the default DBus executor.
@@ -80,7 +85,9 @@ func (h *ShutdownHandler) Handle(ctx context.Context, msg exchange.Message, resu
 		action = "reboot"
 	}
 	log.Printf("shutdown: requesting %s via DBus", action)
-	if err := h.Shutdown(reboot); err != nil {
+	dbusCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := h.Shutdown(dbusCtx, reboot); err != nil {
 		log.Printf("shutdown: %s failed: %v", action, err)
 		_ = result.SendResult(ctx, opID, exchange.StatusFailed, err.Error())
 	}
@@ -169,14 +176,20 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 		return err
 	}
 
-	// interpreter defaults to /bin/sh if not provided.
+	// Whitespace-only is absent: strings.Fields returns an empty slice for " ",
+	// "\t" and "\n", which the == "" check does not catch.
 	interpreter, _ := getString(msg, "interpreter")
-	if interpreter == "" {
+	if strings.TrimSpace(interpreter) == "" {
 		interpreter = "/bin/sh"
 	}
 
 	// Split interpreter into binary path and optional arguments (e.g. "/usr/bin/env python3").
 	interpreterFields := strings.Fields(interpreter)
+	if len(interpreterFields) == 0 {
+		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 103,
+			"execute-script: cannot determine interpreter")
+		return nil
+	}
 	interpreterBin := interpreterFields[0]
 	interpreterArgs := interpreterFields[1:]
 
@@ -185,10 +198,20 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 		log.Printf("execute-script: username switching not supported under strict confinement, ignoring username %q", username)
 	}
 
-	// Verify interpreter binary exists.
-	if _, err := os.Stat(interpreterBin); err != nil {
-		_ = result.SendResult(ctx, opID, exchange.StatusFailed,
+	// os.Stat passes for directories and non-executable files, which then fail
+	// later at fork/exec with a less specific message.
+	if fi, err := os.Stat(interpreterBin); err != nil {
+		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 103,
 			fmt.Sprintf("execute-script: interpreter not found: %s", interpreterBin))
+		return nil
+	} else if fi.IsDir() {
+		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 103,
+			fmt.Sprintf("execute-script: interpreter %s is not executable: is a directory", interpreterBin))
+		return nil
+	}
+	if err := unix.Access(interpreterBin, unix.X_OK); err != nil {
+		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 103,
+			fmt.Sprintf("execute-script: interpreter %s is not executable: %v", interpreterBin, err))
 		return nil
 	}
 
@@ -298,7 +321,20 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 		return nil
 	}
 	if runErr != nil {
-		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 103, output)
+		text := output
+		var exitErr *exec.ExitError
+		switch {
+		case errors.As(runErr, &exitErr):
+			// The script ran and failed: keep its output, append the exit status
+			// so the operator can tell 42 from 1.
+			text = fmt.Sprintf("%s\nexit status %d", output, exitErr.ExitCode())
+		default:
+			// The interpreter could not be executed at all, so there is no script
+			// output to report — without this the Landscape UI shows a blank
+			// failure with no explanation.
+			text = fmt.Sprintf("execute-script: cannot run interpreter %s: %v", interpreterBin, runErr)
+		}
+		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 103, text)
 		return nil
 	}
 

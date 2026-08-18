@@ -19,6 +19,7 @@ import (
 // messages. Message fields match the Python temperature.py plugin exactly.
 // If no thermal zones are found the plugin runs silently without sending messages.
 type Temperature struct {
+	heartbeatSource
 	sysfsPath string
 	interval  time.Duration
 }
@@ -34,6 +35,8 @@ func NewTemperature() *Temperature {
 // Name returns the Landscape message type string.
 func (p *Temperature) Name() string { return "temperature" }
 
+func (p *Temperature) Interval() time.Duration { return p.interval }
+
 // Run starts the periodic temperature collection loop.
 func (p *Temperature) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	ticker := time.NewTicker(p.interval)
@@ -43,6 +46,7 @@ func (p *Temperature) Run(ctx context.Context, sink exchange.MessageSink, _ *per
 		case <-ctx.Done():
 			return nil
 		case t := <-ticker.C:
+			p.beat(p.Name())
 			zones, err := p.readZones()
 			if err != nil {
 				log.Printf("temperature: %v", err)

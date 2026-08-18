@@ -21,6 +21,7 @@ type rebootState struct {
 // changes from the previously reported value. Message type and fields match the
 // Python rebootrequired.py plugin exactly.
 type RebootRequiredPlugin struct {
+	heartbeatSource
 	interval time.Duration
 	snapd    snapd.Client
 }
@@ -35,6 +36,8 @@ func NewRebootRequired(client snapd.Client) *RebootRequiredPlugin {
 
 // Name returns the Landscape message type string.
 func (p *RebootRequiredPlugin) Name() string { return "reboot-required-info" }
+
+func (p *RebootRequiredPlugin) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic reboot-required check loop. A message is emitted
 // only when the reboot flag changes from its previously reported value.
@@ -57,7 +60,10 @@ func (p *RebootRequiredPlugin) Run(ctx context.Context, sink exchange.MessageSin
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			flag, err := p.snapd.GetRebootRequired(ctx)
+			p.beat(p.Name())
+			callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+			flag, err := p.snapd.GetRebootRequired(callCtx)
+			cancel()
 			if err != nil {
 				log.Printf("reboot-required: %v", err)
 				continue
@@ -65,12 +71,16 @@ func (p *RebootRequiredPlugin) Run(ctx context.Context, sink exchange.MessageSin
 			if prevFlag != nil && *prevFlag == flag {
 				continue // no change, skip
 			}
-			// Value changed (or first sample): update tracker and persist.
+			// Value changed (or first sample): persist, then update the tracker
+			// only on a successful save so a failure is re-detected next tick.
+			if state != nil {
+				if err := state.SetPluginState(rebootState{Initialized: true, Flag: flag}); err != nil {
+					log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+					continue
+				}
+			}
 			f := flag
 			prevFlag = &f
-			if state != nil {
-				_ = state.SetPluginState(rebootState{Initialized: true, Flag: flag})
-			}
 			msg := exchange.Message{
 				"type":     "reboot-required-info",
 				"flag":     flag,

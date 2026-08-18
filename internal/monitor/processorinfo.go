@@ -23,6 +23,7 @@ type processorInfoState struct {
 }
 
 type ProcessorInfo struct {
+	heartbeatSource
 	cpuinfoPath string
 	interval    time.Duration
 	delay       time.Duration
@@ -38,10 +39,16 @@ func NewProcessorInfo() *ProcessorInfo {
 
 func (p *ProcessorInfo) Name() string { return "processor-info" }
 
+func (p *ProcessorInfo) Interval() time.Duration { return p.interval }
+
 func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved processorInfoState
 	if state != nil {
-		_ = state.GetPluginState(&saved)
+		if err := state.GetPluginState(&saved); err != nil {
+			// Zero state is not equivalent to "no changes yet": for users it
+			// re-sends every account as a create.
+			log.Printf("%s: loading state: %v; treating as first run", p.Name(), err)
+		}
 	}
 
 	if p.delay > 0 {
@@ -96,6 +103,7 @@ func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, stat
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			doSend()
 		}
 	}

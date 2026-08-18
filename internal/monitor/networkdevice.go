@@ -23,6 +23,7 @@ type networkDeviceState struct {
 }
 
 type NetworkDevice struct {
+	heartbeatSource
 	interval      time.Duration
 	getInterfaces func() ([]net.Interface, error)
 	getAddrs      func(iface *net.Interface) ([]net.Addr, error)
@@ -40,10 +41,16 @@ func NewNetworkDevice() *NetworkDevice {
 
 func (p *NetworkDevice) Name() string { return "network-device" }
 
+func (p *NetworkDevice) Interval() time.Duration { return p.interval }
+
 func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved networkDeviceState
 	if state != nil {
-		_ = state.GetPluginState(&saved)
+		if err := state.GetPluginState(&saved); err != nil {
+			// Zero state is not equivalent to "no changes yet": for users it
+			// re-sends every account as a create.
+			log.Printf("%s: loading state: %v; treating as first run", p.Name(), err)
+		}
 	}
 
 	ticker := time.NewTicker(p.interval)
@@ -53,6 +60,7 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			devices, speeds, err := p.collect()
 			if err != nil {
 				log.Printf("network-device: %v", err)
@@ -68,10 +76,15 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 			if hash == saved.Hash {
 				continue
 			}
-			saved.Hash = hash
 			if state != nil {
-				_ = state.SetPluginState(saved)
+				if err := state.SetPluginState(networkDeviceState{Hash: hash}); err != nil {
+					// Do not advance the in-memory hash: if the save failed, the
+					// change must be re-detected and re-sent next tick.
+					log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+					continue
+				}
 			}
+			saved.Hash = hash
 			msg := exchange.Message{
 				"type":          "network-device",
 				"devices":       devices,
