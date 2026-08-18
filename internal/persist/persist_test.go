@@ -444,3 +444,63 @@ func TestSetPluginState_DoesNotRollBackOtherFields(t *testing.T) {
 		t.Errorf("OutboundSequence rolled back to %d", got.OutboundSequence)
 	}
 }
+
+// TestLoad_RecoversFromBackupWhenStateIsCorrupt asserts a truncated or corrupt
+// state file falls back to the .old backup rather than failing permanently or
+// silently reverting to zero state.
+func TestLoad_RecoversFromBackupWhenStateIsCorrupt(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	store := persist.New(path)
+
+	first, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	first.SecureID = "GOOD-ID"
+	first.OutboundSequence = 7
+	if err := store.Save(first); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// A second save rotates the previous good file to state.json.old.
+	first.OutboundSequence = 8
+	if err := store.Save(first); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, err := os.Stat(path + ".old"); err != nil {
+		t.Fatalf("expected a .old backup after the second save: %v", err)
+	}
+
+	// Simulate a truncated write.
+	if err := os.WriteFile(path, []byte(`{"secure_id":"GOO`), 0600); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+
+	recovered, err := persist.New(path).Load()
+	if err != nil {
+		t.Fatalf("Load should recover from the backup, got: %v", err)
+	}
+	if recovered.SecureID != "GOOD-ID" {
+		t.Errorf("SecureID: want GOOD-ID from the backup, got %q", recovered.SecureID)
+	}
+}
+
+// TestLoad_CorruptWithNoBackupIsAnError guards against silently returning zero
+// state, which for the users plugin means re-sending every user as a create.
+func TestLoad_CorruptWithNoBackupIsAnError(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if _, err := persist.New(path).Load(); err == nil {
+		t.Fatal("want an error for a corrupt state file with no backup, got nil")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -38,10 +39,30 @@ func New(path string) *Store {
 
 // Load reads State from disk. If the file does not exist, returns a
 // zero-value State (not an error) — this is the normal case for a new client.
+// A corrupt file is recovered from the .old backup written by Save; this
+// recovery is deliberately confined to Load (daemon startup and plugin state
+// reads) and is not applied to the Update read-modify-write path, where
+// returning stale backup data would roll back exchange fields.
 func (s *Store) Load() (*State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.loadLocked()
+
+	state, err := s.loadLocked()
+	if err != nil {
+		backup, berr := os.ReadFile(s.path + ".old")
+		if berr == nil {
+			var recovered State
+			if jerr := json.Unmarshal(backup, &recovered); jerr == nil {
+				log.Printf("persist: %s is corrupt (%v); recovered from %s.old", s.path, err, s.path)
+				if recovered.PluginState == nil {
+					recovered.PluginState = make(map[string]json.RawMessage)
+				}
+				return &recovered, nil
+			}
+		}
+		return nil, err
+	}
+	return state, nil
 }
 
 func (s *Store) loadLocked() (*State, error) {
@@ -105,6 +126,14 @@ func (s *Store) saveLocked(state *State) error {
 	if err := f.Close(); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("persist: closing temp file: %w", err)
+	}
+
+	// Keep the previous good state as a backup, mirroring Python's Persist, so a
+	// truncated write or disk corruption is recoverable rather than fatal.
+	if existing, err := os.ReadFile(s.path); err == nil {
+		if err := os.WriteFile(s.path+".old", existing, 0600); err != nil {
+			log.Printf("persist: writing backup: %v", err)
+		}
 	}
 
 	if err := os.Rename(tmpPath, s.path); err != nil {

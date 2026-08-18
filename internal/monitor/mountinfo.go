@@ -57,7 +57,11 @@ func (p *MountInfo) Interval() time.Duration { return p.interval }
 func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved mountInfoState
 	if state != nil {
-		_ = state.GetPluginState(&saved)
+		if err := state.GetPluginState(&saved); err != nil {
+			// Zero state is not equivalent to "no changes yet": for users it
+			// re-sends every account as a create.
+			log.Printf("%s: loading state: %v; treating as first run", p.Name(), err)
+		}
 	}
 
 	ticker := time.NewTicker(p.interval)

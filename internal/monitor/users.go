@@ -59,7 +59,11 @@ func (p *UserMonitor) Interval() time.Duration { return p.interval }
 func (p *UserMonitor) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved usersState
 	if state != nil {
-		_ = state.GetPluginState(&saved)
+		if err := state.GetPluginState(&saved); err != nil {
+			// Zero state is not equivalent to "no changes yet": for users it
+			// re-sends every account as a create.
+			log.Printf("%s: loading state: %v; treating as first run", p.Name(), err)
+		}
 	}
 	if saved.Users == nil {
 		saved.Users = make(map[string]userRecord)
