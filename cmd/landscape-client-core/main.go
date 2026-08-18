@@ -85,7 +85,7 @@ func main() {
 	tc, err := transport.New(transport.Config{
 		// The server extracts the client version from User-Agent: landscape-client/<version>
 		// and uses it to check snap monitoring compatibility (requires >= 23.02+git6282).
-		UserAgent:    version.UserAgent,
+		UserAgent:    version.UserAgent(),
 		SSLPublicKey: cfg.SSLPublicKey,
 		HTTPProxy:    cfg.HTTPProxy,
 		HTTPSProxy:   cfg.HTTPSProxy,
