@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/godbus/dbus/v5"
+	"golang.org/x/sys/unix"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
 )
@@ -175,14 +176,20 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 		return err
 	}
 
-	// interpreter defaults to /bin/sh if not provided.
+	// Whitespace-only is absent: strings.Fields returns an empty slice for " ",
+	// "\t" and "\n", which the == "" check does not catch.
 	interpreter, _ := getString(msg, "interpreter")
-	if interpreter == "" {
+	if strings.TrimSpace(interpreter) == "" {
 		interpreter = "/bin/sh"
 	}
 
 	// Split interpreter into binary path and optional arguments (e.g. "/usr/bin/env python3").
 	interpreterFields := strings.Fields(interpreter)
+	if len(interpreterFields) == 0 {
+		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 103,
+			"execute-script: cannot determine interpreter")
+		return nil
+	}
 	interpreterBin := interpreterFields[0]
 	interpreterArgs := interpreterFields[1:]
 
@@ -191,10 +198,20 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 		log.Printf("execute-script: username switching not supported under strict confinement, ignoring username %q", username)
 	}
 
-	// Verify interpreter binary exists.
-	if _, err := os.Stat(interpreterBin); err != nil {
-		_ = result.SendResult(ctx, opID, exchange.StatusFailed,
+	// os.Stat passes for directories and non-executable files, which then fail
+	// later at fork/exec with a less specific message.
+	if fi, err := os.Stat(interpreterBin); err != nil {
+		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 103,
 			fmt.Sprintf("execute-script: interpreter not found: %s", interpreterBin))
+		return nil
+	} else if fi.IsDir() {
+		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 103,
+			fmt.Sprintf("execute-script: interpreter %s is not executable: is a directory", interpreterBin))
+		return nil
+	}
+	if err := unix.Access(interpreterBin, unix.X_OK); err != nil {
+		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 103,
+			fmt.Sprintf("execute-script: interpreter %s is not executable: %v", interpreterBin, err))
 		return nil
 	}
 

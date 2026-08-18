@@ -702,3 +702,74 @@ func TestScriptExec_NonZeroExitReportsCode(t *testing.T) {
 		t.Errorf("exit status 42 not reported: %q", call.output)
 	}
 }
+
+// TestScriptExec_WhitespaceInterpreter asserts a whitespace-only interpreter is
+// treated as absent rather than panicking. strings.Fields returns an empty
+// slice for all of these, and the code indexed [0] unguarded.
+func TestScriptExec_WhitespaceInterpreter(t *testing.T) {
+	tests := []struct {
+		name        string
+		interpreter string
+	}{
+		{"empty", ""},
+		{"space", " "},
+		{"tab", "\t"},
+		{"newline", "\n"},
+		{"spaces", "   "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := manager.NewScriptExecHandler(t.TempDir(), nil)
+			sink := &mockResultSink{}
+
+			msg := exchange.Message{
+				"type":         "execute-script",
+				"operation-id": int64(1),
+				"code":         "echo ran-ok\n",
+				"interpreter":  tt.interpreter,
+			}
+
+			if err := h.Handle(context.Background(), msg, sink); err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+
+			call, ok := sink.lastCall()
+			if !ok {
+				t.Fatal("no result sent")
+			}
+			if strings.Contains(call.output, "panic") {
+				t.Fatalf("handler panicked; operator sees a Go runtime error: %q", call.output)
+			}
+			if !strings.Contains(call.output, "ran-ok") {
+				t.Errorf("script should have run under the default interpreter, got %q", call.output)
+			}
+		})
+	}
+}
+
+// TestScriptExec_DirectoryInterpreter asserts a directory is rejected before
+// exec with a specific reason, rather than passing os.Stat and failing later.
+func TestScriptExec_DirectoryInterpreter(t *testing.T) {
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+	sink := &mockResultSink{}
+
+	msg := exchange.Message{
+		"type":         "execute-script",
+		"operation-id": int64(2),
+		"code":         "echo hi\n",
+		"interpreter":  t.TempDir(),
+	}
+
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if !strings.Contains(call.output, "not executable") {
+		t.Errorf("want an explicit not-executable message, got %q", call.output)
+	}
+}
