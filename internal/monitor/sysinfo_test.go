@@ -2,11 +2,13 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -327,6 +329,70 @@ SwapFree:       2097152 kB
 	}
 	if !gotCompInfo {
 		t.Error("expected a new computer-info message after memory change")
+	}
+}
+
+// TestComputerInfo_HostnameErrorIsNotSentAsEmpty asserts a failed hostname
+// lookup is not reported as an empty hostname. `hostname, _ := os.Hostname()`
+// sent "", which the server reads as "this device has no hostname".
+func TestComputerInfo_HostnameErrorIsNotSentAsEmpty(t *testing.T) {
+	p := NewComputerInfo(&snapd.MockClient{})
+	p.interval = 5 * time.Millisecond
+	p.getHostname = func() (string, error) {
+		return "", errors.New("simulated hostname failure")
+	}
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-errCh
+
+	for _, msg := range sink.Messages() {
+		v, ok := msg["hostname"]
+		if !ok {
+			continue
+		}
+		if s, isStr := v.(string); isStr && s == "" {
+			t.Error("sent an empty hostname after a failed lookup")
+		}
+		if b, isBytes := v.([]byte); isBytes && len(b) == 0 {
+			t.Error("sent an empty hostname after a failed lookup")
+		}
+	}
+}
+
+func TestComputerInfo_HostnameIsSentWhenAvailable(t *testing.T) {
+	p := NewComputerInfo(&snapd.MockClient{})
+	p.interval = 5 * time.Millisecond
+	p.getHostname = func() (string, error) { return "test-host", nil }
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+
+	msgs := waitForMessages(t, sink, 1, 1*time.Second)
+	cancel()
+	<-errCh
+
+	var found bool
+	for _, msg := range msgs {
+		if v, ok := msg["hostname"]; ok {
+			found = true
+			if fmt.Sprintf("%s", v) != "test-host" {
+				t.Errorf("hostname: want test-host, got %v", v)
+			}
+		}
+	}
+	if !found {
+		t.Error("no message carried a hostname")
 	}
 }
 
@@ -855,8 +921,9 @@ func TestMountInfo_DataWatcher(t *testing.T) {
 	// First tick: 1 mount-info + 1 free-space = 2 messages.
 	waitForMessages(t, sink, 2, 500*time.Millisecond)
 
-	// Let several more ticks pass; free-space is sent every tick,
-	// but mount-info should not repeat since the layout didn't change.
+	// Let several more ticks pass. Neither the mount layout nor the free space
+	// changes (constant statvfs mock), so neither message repeats: free-space is
+	// now change-detected rather than sent unconditionally every tick.
 	time.Sleep(60 * time.Millisecond)
 	cancel()
 	if err := <-errCh; err != nil {
@@ -872,8 +939,8 @@ func TestMountInfo_DataWatcher(t *testing.T) {
 	if countByType["mount-info"] != 1 {
 		t.Errorf("mount-info count: want 1 (data-watcher), got %d", countByType["mount-info"])
 	}
-	if countByType["free-space"] < 2 {
-		t.Errorf("free-space count: want ≥2, got %d", countByType["free-space"])
+	if countByType["free-space"] != 1 {
+		t.Errorf("free-space count: want 1 (unchanged free space is not re-sent), got %d", countByType["free-space"])
 	}
 }
 
@@ -920,6 +987,63 @@ func TestMountInfo_DataWatcherChange(t *testing.T) {
 	}
 	if finalMountInfoCount <= initialMountInfoCount {
 		t.Errorf("expected new mount-info after layout change; count before=%d after=%d", initialMountInfoCount, finalMountInfoCount)
+	}
+}
+
+// TestMountInfo_FreeSpaceChange asserts free-space is re-sent when the free
+// space actually changes, even though the mount layout does not. This is the
+// other half of the change-detection contract: unchanged free space is skipped
+// (TestMountInfo_DataWatcher), changed free space is reported.
+func TestMountInfo_FreeSpaceChange(t *testing.T) {
+	dir := t.TempDir()
+	mountsPath := filepath.Join(dir, "mounts")
+	writeFixture(t, mountsPath, mountsFixture)
+
+	var freeMB atomic.Int64
+	freeMB.Store(50)
+	p := &MountInfo{
+		mountsPath: mountsPath,
+		statvfs: func(_ string) (syscall.Statfs_t, error) {
+			const bsize = int64(4096)
+			return syscall.Statfs_t{
+				Bsize:  bsize,
+				Blocks: uint64(100 * 1024 * 1024 / bsize),
+				Bfree:  uint64(freeMB.Load() * 1024 * 1024 / bsize),
+			}, nil
+		},
+		interval: 5 * time.Millisecond,
+	}
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+
+	waitForMessages(t, sink, 2, 500*time.Millisecond)
+	initialFreeSpaceCount := 0
+	for _, m := range sink.Messages() {
+		if m["type"] == "free-space" {
+			initialFreeSpaceCount++
+		}
+	}
+
+	// Free space drops; the plugin must report the change.
+	freeMB.Store(25)
+	waitForMessages(t, sink, len(sink.Messages())+1, 500*time.Millisecond)
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	finalFreeSpaceCount := 0
+	for _, m := range sink.Messages() {
+		if m["type"] == "free-space" {
+			finalFreeSpaceCount++
+		}
+	}
+	if finalFreeSpaceCount <= initialFreeSpaceCount {
+		t.Errorf("expected new free-space after free space changed; count before=%d after=%d", initialFreeSpaceCount, finalFreeSpaceCount)
 	}
 }
 

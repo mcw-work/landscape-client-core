@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -46,11 +47,18 @@ func (p *Temperature) Run(ctx context.Context, sink exchange.MessageSink, _ *per
 			log.Printf("temperature: %v", err)
 			return
 		}
-		for zone, temp := range zones {
+		// Iterate a sorted slice: ranging the map emitted zones in a different
+		// order every tick.
+		names := make([]string, 0, len(zones))
+		for zone := range zones {
+			names = append(names, zone)
+		}
+		slices.Sort(names)
+		for _, zone := range names {
 			msg := exchange.Message{
 				"type":         "temperature",
 				"thermal-zone": zone,
-				"temperatures": []any{bpickle.Tuple{t.Unix(), temp}},
+				"temperatures": []any{bpickle.Tuple{t.Unix(), zones[zone]}},
 			}
 			if err := sink.Send(ctx, msg); err != nil {
 				log.Printf("temperature: send: %v", err)

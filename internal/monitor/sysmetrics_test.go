@@ -355,6 +355,51 @@ func TestTemperature_ContextCancel(t *testing.T) {
 	}
 }
 
+// TestTemperature_ZoneOrderIsDeterministic asserts multi-zone devices emit in a
+// stable order. Iterating a map produced a different order every tick.
+func TestTemperature_ZoneOrderIsDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	for _, z := range []struct{ name, temp string }{
+		{"thermal_zone0", "45000"},
+		{"thermal_zone1", "50000"},
+		{"thermal_zone2", "55000"},
+	} {
+		zoneDir := filepath.Join(dir, z.name)
+		if err := os.MkdirAll(zoneDir, 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		writeFixture(t, filepath.Join(zoneDir, "temp"), z.temp+"\n")
+		writeFixture(t, filepath.Join(zoneDir, "type"), z.name+"\n")
+	}
+
+	var orders [][]string
+	for run := 0; run < 5; run++ {
+		p := &Temperature{interval: 5 * time.Millisecond, sysfsPath: dir}
+		sink := &mockSink{}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- p.Run(ctx, sink, nil) }()
+		msgs := waitForMessages(t, sink, 3, 500*time.Millisecond)
+		cancel()
+		<-errCh
+
+		order := make([]string, 0, 3)
+		for _, m := range msgs[:3] {
+			order = append(order, m["thermal-zone"].(string))
+		}
+		orders = append(orders, order)
+	}
+
+	for i := 1; i < len(orders); i++ {
+		for j := range orders[0] {
+			if orders[i][j] != orders[0][j] {
+				t.Fatalf("zone order varies between runs: %v vs %v", orders[0], orders[i])
+			}
+		}
+	}
+}
+
 // ─── RebootRequired tests ──────────────────────────────────────────────────
 
 func TestRebootRequired_HappyPath(t *testing.T) {

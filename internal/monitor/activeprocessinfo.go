@@ -174,6 +174,9 @@ func (p *ActiveProcessInfo) readBootTime() (int64, error) {
 			return t, nil
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("scanning proc/stat: %w", err)
+	}
 	return 0, fmt.Errorf("btime not found in proc/stat")
 }
 
@@ -260,10 +263,24 @@ func (p *ActiveProcessInfo) readProcessInfo(pid int64, bootTime int64, uptime fl
 		return nil, fmt.Errorf("too few fields in stat for pid %d", pid)
 	}
 	state := rest[0]
-	utime, _ := strconv.ParseInt(rest[11], 10, 64)
-	stime, _ := strconv.ParseInt(rest[12], 10, 64)
-	startJiffies, _ := strconv.ParseInt(rest[19], 10, 64)
-	vsize, _ := strconv.ParseInt(rest[20], 10, 64)
+	// A malformed numeric field must skip the process, not report it as 0%% CPU
+	// started at boot time.
+	utime, err := strconv.ParseInt(rest[11], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parsing utime for pid %d: %w", pid, err)
+	}
+	stime, err := strconv.ParseInt(rest[12], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parsing stime for pid %d: %w", pid, err)
+	}
+	startJiffies, err := strconv.ParseInt(rest[19], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parsing starttime for pid %d: %w", pid, err)
+	}
+	vsize, err := strconv.ParseInt(rest[20], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parsing vsize for pid %d: %w", pid, err)
+	}
 
 	startTimeSec := bootTime + startJiffies/clkTck
 	totalTime := utime + stime
@@ -317,6 +334,9 @@ func (p *ActiveProcessInfo) readStatusInto(pid int64, info *processInfo) {
 				info.vmSize, _ = strconv.ParseInt(fields[1], 10, 64)
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("active-process-info: scanning status for pid %d: %v", pid, err)
 	}
 }
 
