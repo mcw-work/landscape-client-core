@@ -54,16 +54,6 @@ func asyncResponse(changeID string) []byte {
 	return data
 }
 
-func errorResponse(code int, msg string) []byte {
-	resp := map[string]any{
-		"type":        "error",
-		"status-code": code,
-		"result":      map[string]string{"message": msg},
-	}
-	data, _ := json.Marshal(resp)
-	return data
-}
-
 // Test 1: ListSnaps returns correct []SnapInfo.
 func TestListSnaps(t *testing.T) {
 	want := []snapd.SnapInfo{

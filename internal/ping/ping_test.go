@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -220,32 +221,27 @@ func TestPinger_IntervalConcurrentAccess(t *testing.T) {
 	start := make(chan struct{})
 	var sawValue atomic.Bool
 
-	for i := 0; i < writers; i++ {
+	for i := range writers {
 		wg.Add(1)
 		go func(offset int) {
 			defer wg.Done()
 			<-start
-			for j := 0; j < iterations; j++ {
+			for j := range iterations {
 				p.SetInterval(durations[(j+offset)%len(durations)])
 			}
 		}(i)
 	}
 
-	for i := 0; i < readers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range readers {
+		wg.Go(func() {
 			<-start
-			for j := 0; j < iterations; j++ {
+			for range iterations {
 				got := p.GetInterval()
-				for _, want := range durations {
-					if got == want {
-						sawValue.Store(true)
-						break
-					}
+				if slices.Contains(durations, got) {
+					sawValue.Store(true)
 				}
 			}
-		}()
+		})
 	}
 
 	close(start)

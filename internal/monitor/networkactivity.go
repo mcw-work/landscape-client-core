@@ -120,12 +120,12 @@ func (p *NetworkActivity) readDev() (rx, tx map[string]int64, err error) {
 			continue
 		}
 		line := scanner.Text()
-		colon := strings.Index(line, ":")
-		if colon < 0 {
+		before, after, ok := strings.Cut(line, ":")
+		if !ok {
 			continue
 		}
-		iface := strings.TrimSpace(line[:colon])
-		fields := strings.Fields(line[colon+1:])
+		iface := strings.TrimSpace(before)
+		fields := strings.Fields(after)
 		if len(fields) < 9 {
 			continue
 		}

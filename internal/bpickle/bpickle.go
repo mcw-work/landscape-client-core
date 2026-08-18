@@ -111,7 +111,7 @@ func marshalValue(v any) ([]byte, error) {
 
 // marshalInt encodes an int64 as i<decimal>; .
 func marshalInt(v int64) ([]byte, error) {
-	return []byte(fmt.Sprintf("i%d;", v)), nil
+	return fmt.Appendf(nil, "i%d;", v), nil
 }
 
 // marshalFloat64 encodes a float64 as f<repr>; matching Python's repr() output.
@@ -126,14 +126,14 @@ func marshalFloat64(v float64) ([]byte, error) {
 
 // marshalBytes encodes []byte as s<length>:<raw bytes> .
 func marshalBytes(v []byte) ([]byte, error) {
-	prefix := []byte(fmt.Sprintf("s%d:", len(v)))
+	prefix := fmt.Appendf(nil, "s%d:", len(v))
 	return append(prefix, v...), nil
 }
 
 // marshalString encodes a string as u<byte_length>:<utf8 bytes> .
 func marshalString(v string) ([]byte, error) {
 	b := []byte(v)
-	prefix := []byte(fmt.Sprintf("u%d:", len(b)))
+	prefix := fmt.Appendf(nil, "u%d:", len(b))
 	return append(prefix, b...), nil
 }
 

@@ -218,7 +218,7 @@ func (p *ComputerInfo) readOSRelease() (distributorID, description, release, cod
 	f, err := os.Open(p.osReleasePath)
 	if err != nil {
 		slog.Warn("computer-info: cannot open os-release", "path", p.osReleasePath, "error", err)
-		return
+		return distributorID, description, release, codeName
 	}
 	defer func() {
 		_ = f.Close()
@@ -244,7 +244,7 @@ func (p *ComputerInfo) readOSRelease() (distributorID, description, release, cod
 			codeName = value
 		}
 	}
-	return
+	return distributorID, description, release, codeName
 }
 
 func (p *ComputerInfo) readSnapAssertions(ctx context.Context) (serial, model, brand string) {

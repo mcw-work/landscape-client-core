@@ -4,8 +4,36 @@ linters:
   default: none
   enable:
     - errcheck
-    - staticcheck
     - govet
+    - misspell
+    - modernize
+    - nakedret
+    - staticcheck
+    - testpackage
+    - unused
+    - depguard
+
+  settings:
+    depguard:
+      rules:
+        main:
+          # The small dependency tree is a deliberate property of this project;
+          # keep it closed rather than discovering additions in review.
+          allow:
+            - $gostd
+            - github.com/canonical/landscape-client-core
+            - github.com/godbus/dbus/v5
+            - golang.org/x/sync
+            - golang.org/x/sys
+            - golang.org/x/term
+
+  exclusions:
+    rules:
+      # Several packages test unexported logic and are deliberately internal test
+      # packages; the review explicitly endorses that where it is intentional.
+      - path: internal/(monitor|exchange|transport|bpickle|persist|manager|ping)/.*_test\.go
+        linters:
+          - testpackage
 
 run:
   go: "1.25"

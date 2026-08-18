@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/rand"
 	"os"
 	"runtime/debug"
@@ -408,10 +409,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	// restored spool after a long outage would otherwise produce one enormous
 	// request.
 	e.mu.Lock()
-	n := len(e.pending)
-	if n > maxMessagesPerExchange {
-		n = maxMessagesPerExchange
-	}
+	n := min(len(e.pending), maxMessagesPerExchange)
 	snapshot := make([]Message, n)
 	copy(snapshot, e.pending[:n])
 	e.pending = e.pending[n:]
@@ -552,10 +550,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	// If the server's ACK is below what we just sent, re-enqueue un-ACK'd messages
 	// so they are retransmitted at the correct sequence on the next exchange.
 	if serverACK < sentUpTo {
-		nAcked := int(serverACK - state.OutboundSequence)
-		if nAcked < 0 {
-			nAcked = 0
-		}
+		nAcked := max(int(serverACK-state.OutboundSequence), 0)
 		if nAcked < len(snapshot) {
 			e.mu.Lock()
 			e.pending = slices.Insert(e.pending, 0, snapshot[nAcked:]...)
@@ -677,7 +672,6 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 				continue
 			}
 			for _, h := range handlers {
-				h := h
 				msg := msg
 				go func() {
 					defer func() {
@@ -698,9 +692,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		if mergedPluginState == nil {
 			mergedPluginState = make(map[string]json.RawMessage)
 		}
-		for k, v := range current.PluginState {
-			mergedPluginState[k] = v
-		}
+		maps.Copy(mergedPluginState, current.PluginState)
 
 		current.SecureID = state.SecureID
 		current.InsecureID = state.InsecureID

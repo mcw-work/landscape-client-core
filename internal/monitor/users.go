@@ -195,7 +195,7 @@ func (p *UserMonitor) parseGroup(users map[string]userRecord) (map[string]groupR
 		}
 		var members []string
 		if parts[3] != "" {
-			for _, m := range strings.Split(parts[3], ",") {
+			for m := range strings.SplitSeq(parts[3], ",") {
 				m = strings.TrimSpace(m)
 				if userSet[m] {
 					members = append(members, m)

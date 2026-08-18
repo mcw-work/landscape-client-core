@@ -141,7 +141,7 @@ func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 				mask := ipNet.Mask
 				netmask = fmt.Sprintf("%d.%d.%d.%d", mask[0], mask[1], mask[2], mask[3])
 				broadcast := make(net.IP, 4)
-				for i := 0; i < 4; i++ {
+				for i := range 4 {
 					broadcast[i] = ip4[i] | ^mask[i]
 				}
 				broadcastAddr = broadcast.String()

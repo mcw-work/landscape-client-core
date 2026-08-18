@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -169,9 +170,7 @@ func (c *Client) Post(ctx context.Context, rawURL string, headers map[string]str
 	if c.userAgent != "" {
 		mergedHeaders["User-Agent"] = c.userAgent
 	}
-	for k, v := range headers {
-		mergedHeaders[k] = v
-	}
+	maps.Copy(mergedHeaders, headers)
 	mergedHeaders["Content-Type"] = contentType // enforce; callers cannot override
 	return c.doRequest(ctx, http.MethodPost, rawURL, bytes.NewReader(body), mergedHeaders)
 }
@@ -184,9 +183,7 @@ func (c *Client) Get(ctx context.Context, rawURL string, headers map[string]stri
 	if c.userAgent != "" {
 		merged["User-Agent"] = c.userAgent
 	}
-	for k, v := range headers {
-		merged[k] = v
-	}
+	maps.Copy(merged, headers)
 	return c.doRequest(ctx, http.MethodGet, rawURL, nil, merged)
 }
 
