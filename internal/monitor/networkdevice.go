@@ -23,6 +23,7 @@ type networkDeviceState struct {
 }
 
 type NetworkDevice struct {
+	heartbeatSource
 	interval      time.Duration
 	getInterfaces func() ([]net.Interface, error)
 	getAddrs      func(iface *net.Interface) ([]net.Addr, error)
@@ -40,6 +41,8 @@ func NewNetworkDevice() *NetworkDevice {
 
 func (p *NetworkDevice) Name() string { return "network-device" }
 
+func (p *NetworkDevice) Interval() time.Duration { return p.interval }
+
 func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved networkDeviceState
 	if state != nil {
@@ -53,6 +56,7 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			devices, speeds, err := p.collect()
 			if err != nil {
 				log.Printf("network-device: %v", err)

@@ -14,6 +14,7 @@ import (
 // Landscape server. The message type and field names match the Python
 // HardwareInfo manager plugin exactly: {"type": "hardware-info", "data": <xml bytes>}.
 type HardwareInfo struct {
+	heartbeatSource
 	interval time.Duration
 }
 
@@ -23,6 +24,8 @@ func NewHardwareInfo() *HardwareInfo {
 }
 
 func (p *HardwareInfo) Name() string { return "hardware-info" }
+
+func (p *HardwareInfo) Interval() time.Duration { return p.interval }
 
 // Run sends hardware info immediately on startup, then once per day.
 func (p *HardwareInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
@@ -34,6 +37,7 @@ func (p *HardwareInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *pe
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			p.tick(ctx, sink)
 		}
 	}

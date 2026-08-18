@@ -34,6 +34,7 @@ type processInfo struct {
 // On the first tick it sends kill-all-processes plus all current processes;
 // on subsequent ticks it sends only creates, updates, and deletes.
 type ActiveProcessInfo struct {
+	heartbeatSource
 	procRoot    string
 	interval    time.Duration
 	initialized bool
@@ -51,6 +52,8 @@ func NewActiveProcessInfo() *ActiveProcessInfo {
 // Name returns the Landscape message type string.
 func (p *ActiveProcessInfo) Name() string { return "active-process-info" }
 
+func (p *ActiveProcessInfo) Interval() time.Duration { return p.interval }
+
 // Run starts the periodic process info collection loop.
 func (p *ActiveProcessInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	ticker := time.NewTicker(p.interval)
@@ -60,6 +63,7 @@ func (p *ActiveProcessInfo) Run(ctx context.Context, sink exchange.MessageSink, 
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			msg, err := p.buildMessage()
 			if err != nil {
 				log.Printf("active-process-info: %v", err)

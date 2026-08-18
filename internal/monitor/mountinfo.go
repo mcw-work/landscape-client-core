@@ -30,6 +30,7 @@ type mountInfoState struct {
 }
 
 type MountInfo struct {
+	heartbeatSource
 	mountsPath string
 	statvfs    func(path string) (syscall.Statfs_t, error)
 	interval   time.Duration
@@ -51,6 +52,8 @@ func defaultStatfs(path string) (syscall.Statfs_t, error) {
 
 func (p *MountInfo) Name() string { return "mount-info" }
 
+func (p *MountInfo) Interval() time.Duration { return p.interval }
+
 func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved mountInfoState
 	if state != nil {
@@ -64,6 +67,7 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			now := time.Now().Unix()
 			mounts, err := p.readMounts()
 			if err != nil {

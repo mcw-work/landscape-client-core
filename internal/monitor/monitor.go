@@ -18,5 +18,6 @@ const snapdCallTimeout = 30 * time.Second
 // Plugin is the interface every monitor plugin implements.
 type Plugin interface {
 	Name() string
+	Interval() time.Duration
 	Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error
 }

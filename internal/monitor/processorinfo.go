@@ -23,6 +23,7 @@ type processorInfoState struct {
 }
 
 type ProcessorInfo struct {
+	heartbeatSource
 	cpuinfoPath string
 	interval    time.Duration
 	delay       time.Duration
@@ -37,6 +38,8 @@ func NewProcessorInfo() *ProcessorInfo {
 }
 
 func (p *ProcessorInfo) Name() string { return "processor-info" }
+
+func (p *ProcessorInfo) Interval() time.Duration { return p.interval }
 
 func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved processorInfoState
@@ -96,6 +99,7 @@ func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, stat
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			doSend()
 		}
 	}

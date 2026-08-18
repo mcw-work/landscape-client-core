@@ -18,6 +18,7 @@ import (
 // CPUUsage monitors CPU utilization by reading /proc/stat.
 // Field names in messages match the Python cpuusage.py plugin exactly.
 type CPUUsage struct {
+	heartbeatSource
 	procStatPath string
 	interval     time.Duration
 	prevTotal    int64
@@ -36,6 +37,8 @@ func NewCPUUsage() *CPUUsage {
 // Name returns the Landscape message type string.
 func (p *CPUUsage) Name() string { return "cpu-usage" }
 
+func (p *CPUUsage) Interval() time.Duration { return p.interval }
+
 // Run starts the periodic CPU usage collection loop. An initial baseline
 // sample is taken synchronously before the ticker starts so the first tick
 // can always produce a real delta.
@@ -52,6 +55,7 @@ func (p *CPUUsage) Run(ctx context.Context, sink exchange.MessageSink, _ *persis
 		case <-ctx.Done():
 			return nil
 		case t := <-ticker.C:
+			p.beat(p.Name())
 			usage, err := p.sample()
 			if err != nil {
 				log.Printf("cpu-usage: %v", err)

@@ -21,6 +21,7 @@ type rebootState struct {
 // changes from the previously reported value. Message type and fields match the
 // Python rebootrequired.py plugin exactly.
 type RebootRequiredPlugin struct {
+	heartbeatSource
 	interval time.Duration
 	snapd    snapd.Client
 }
@@ -35,6 +36,8 @@ func NewRebootRequired(client snapd.Client) *RebootRequiredPlugin {
 
 // Name returns the Landscape message type string.
 func (p *RebootRequiredPlugin) Name() string { return "reboot-required-info" }
+
+func (p *RebootRequiredPlugin) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic reboot-required check loop. A message is emitted
 // only when the reboot flag changes from its previously reported value.
@@ -57,6 +60,7 @@ func (p *RebootRequiredPlugin) Run(ctx context.Context, sink exchange.MessageSin
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
 			flag, err := p.snapd.GetRebootRequired(callCtx)
 			cancel()

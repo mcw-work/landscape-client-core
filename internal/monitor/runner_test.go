@@ -39,7 +39,8 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-func (f *fakePlugin) Name() string { return f.name }
+func (f *fakePlugin) Name() string            { return f.name }
+func (f *fakePlugin) Interval() time.Duration { return time.Second }
 func (f *fakePlugin) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	return f.runFunc(ctx, sink, state)
 }
@@ -409,6 +410,8 @@ type failingPlugin struct{ name string }
 
 func (p *failingPlugin) Name() string { return p.name }
 
+func (p *failingPlugin) Interval() time.Duration { return time.Second }
+
 func (p *failingPlugin) Run(ctx context.Context, _ exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	return errors.New("boom")
 }
@@ -417,6 +420,8 @@ func (p *failingPlugin) Run(ctx context.Context, _ exchange.MessageSink, _ *pers
 type blockingPlugin struct{}
 
 func (p *blockingPlugin) Name() string { return "blocking-plugin" }
+
+func (p *blockingPlugin) Interval() time.Duration { return time.Second }
 
 func (p *blockingPlugin) Run(ctx context.Context, _ exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	<-ctx.Done()

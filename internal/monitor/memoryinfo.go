@@ -18,6 +18,7 @@ import (
 // MemoryInfo monitors free memory and swap by reading /proc/meminfo.
 // Field names in messages match the Python memoryinfo.py plugin exactly.
 type MemoryInfo struct {
+	heartbeatSource
 	procMeminfoPath string
 	interval        time.Duration
 }
@@ -33,6 +34,8 @@ func NewMemoryInfo() *MemoryInfo {
 // Name returns the Landscape message type string.
 func (p *MemoryInfo) Name() string { return "memory-info" }
 
+func (p *MemoryInfo) Interval() time.Duration { return p.interval }
+
 // Run starts the periodic memory information collection loop.
 func (p *MemoryInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	ticker := time.NewTicker(p.interval)
@@ -42,6 +45,7 @@ func (p *MemoryInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *pers
 		case <-ctx.Done():
 			return nil
 		case t := <-ticker.C:
+			p.beat(p.Name())
 			freeMemMB, freeSwapMB, err := p.sample()
 			if err != nil {
 				log.Printf("memory-info: %v", err)

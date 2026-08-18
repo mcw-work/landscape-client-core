@@ -18,6 +18,7 @@ import (
 // NetworkActivity monitors network I/O by reading /proc/net/dev and sending
 // per-interface byte deltas. Message fields match the Python networkactivity.py plugin.
 type NetworkActivity struct {
+	heartbeatSource
 	procNetDevPath string
 	interval       time.Duration
 	lastRx         map[string]int64
@@ -34,6 +35,8 @@ func NewNetworkActivity() *NetworkActivity {
 
 // Name returns the Landscape message type string.
 func (p *NetworkActivity) Name() string { return "network-activity" }
+
+func (p *NetworkActivity) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic network activity collection loop. A baseline sample
 // is taken synchronously before the ticker starts so the first tick can
@@ -54,6 +57,7 @@ func (p *NetworkActivity) Run(ctx context.Context, sink exchange.MessageSink, _ 
 		case <-ctx.Done():
 			return nil
 		case t := <-ticker.C:
+			p.beat(p.Name())
 			rx, tx, err := p.readDev()
 			if err != nil {
 				log.Printf("network-activity: %v", err)

@@ -24,6 +24,7 @@ type snapServicesState struct {
 // previously reported value. Message type and fields match the Python
 // snap-services plugin exactly.
 type SnapServicesPlugin struct {
+	heartbeatSource
 	interval    time.Duration
 	snapdClient snapd.Client
 }
@@ -38,6 +39,8 @@ func NewSnapServices(client snapd.Client) *SnapServicesPlugin {
 
 // Name returns the Landscape message type string.
 func (p *SnapServicesPlugin) Name() string { return "snap-services" }
+
+func (p *SnapServicesPlugin) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic snap services collection loop. A message is emitted
 // only when the services list changes from its previously reported value.
@@ -58,6 +61,7 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
 			services, err := p.snapdClient.ListServices(callCtx)
 			cancel()

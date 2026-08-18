@@ -38,6 +38,7 @@ type usersState struct {
 }
 
 type UserMonitor struct {
+	heartbeatSource
 	passwdPath string
 	groupPath  string
 	interval   time.Duration
@@ -52,6 +53,8 @@ func NewUsers() *UserMonitor {
 }
 
 func (p *UserMonitor) Name() string { return "users" }
+
+func (p *UserMonitor) Interval() time.Duration { return p.interval }
 
 func (p *UserMonitor) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved usersState
@@ -72,6 +75,7 @@ func (p *UserMonitor) Run(ctx context.Context, sink exchange.MessageSink, state 
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			p.beat(p.Name())
 			newUsers, err := p.parsePasswd()
 			if err != nil {
 				log.Printf("users: parsing passwd: %v", err)

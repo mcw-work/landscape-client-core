@@ -235,6 +235,26 @@ func run(ctx context.Context, d deps) error {
 		}
 		return nil
 	})
+	// Watchdog: restart-condition only covers process exit, so a goroutine
+	// blocked forever in a syscall keeps the daemon alive while silently
+	// reporting nothing. Exiting non-zero lets snapd's restart-condition recover
+	// a wedged daemon.
+	eg.Go(func() error {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-groupCtx.Done():
+				return nil
+			case <-ticker.C:
+				if stale := monRunner.StaleSources(); len(stale) > 0 {
+					slog.Error("watchdog: sources stopped making progress; exiting for restart",
+						"sources", stale)
+					return fmt.Errorf("watchdog: stale sources: %v", stale)
+				}
+			}
+		}
+	})
 
 	groupDone := make(chan error, 1)
 	go func() {
