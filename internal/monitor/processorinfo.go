@@ -59,9 +59,6 @@ func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, stat
 		}
 	}
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-
 	doSend := func() {
 		processors := p.parseProcessors()
 		if processors == nil {
@@ -98,15 +95,11 @@ func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, stat
 
 	doSend()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.beat(p.Name())
-			doSend()
-		}
-	}
+	runTicker(ctx, p.interval, false, 0, func(context.Context, time.Time) {
+		p.beat(p.Name())
+		doSend()
+	})
+	return nil
 }
 
 func (p *ProcessorInfo) parseProcessors() []map[string]any {

@@ -39,31 +39,25 @@ func (p *Temperature) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic temperature collection loop.
 func (p *Temperature) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case t := <-ticker.C:
-			p.beat(p.Name())
-			zones, err := p.readZones()
-			if err != nil {
-				log.Printf("temperature: %v", err)
-				continue
+	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, t time.Time) {
+		p.beat(p.Name())
+		zones, err := p.readZones()
+		if err != nil {
+			log.Printf("temperature: %v", err)
+			return
+		}
+		for zone, temp := range zones {
+			msg := exchange.Message{
+				"type":         "temperature",
+				"thermal-zone": zone,
+				"temperatures": []any{bpickle.Tuple{t.Unix(), temp}},
 			}
-			for zone, temp := range zones {
-				msg := exchange.Message{
-					"type":         "temperature",
-					"thermal-zone": zone,
-					"temperatures": []any{bpickle.Tuple{t.Unix(), temp}},
-				}
-				if err := sink.Send(ctx, msg); err != nil {
-					log.Printf("temperature: send: %v", err)
-				}
+			if err := sink.Send(ctx, msg); err != nil {
+				log.Printf("temperature: send: %v", err)
 			}
 		}
-	}
+	})
+	return nil
 }
 
 // readZones globs sysfsPath/thermal_zone* directories and reads each zone's

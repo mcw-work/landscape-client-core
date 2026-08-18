@@ -62,17 +62,11 @@ func (p *ComputerInfo) Run(ctx context.Context, sink exchange.MessageSink, state
 
 	p.tick(ctx, sink, state, &prev)
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.beat(p.Name())
-			p.tick(ctx, sink, state, &prev)
-		}
-	}
+	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		p.tick(ctx, sink, state, &prev)
+	})
+	return nil
 }
 
 func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor, prev *ciSavedState) {

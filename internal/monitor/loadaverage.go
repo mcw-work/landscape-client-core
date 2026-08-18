@@ -37,28 +37,22 @@ func (p *LoadAverage) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic load average collection loop.
 func (p *LoadAverage) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case t := <-ticker.C:
-			p.beat(p.Name())
-			load, err := p.sample()
-			if err != nil {
-				log.Printf("load-average: %v", err)
-				continue
-			}
-			msg := exchange.Message{
-				"type":          "load-average",
-				"load-averages": []any{bpickle.Tuple{t.Unix(), load}},
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("load-average: send: %v", err)
-			}
+	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, t time.Time) {
+		p.beat(p.Name())
+		load, err := p.sample()
+		if err != nil {
+			log.Printf("load-average: %v", err)
+			return
 		}
-	}
+		msg := exchange.Message{
+			"type":          "load-average",
+			"load-averages": []any{bpickle.Tuple{t.Unix(), load}},
+		}
+		if err := sink.Send(ctx, msg); err != nil {
+			log.Printf("load-average: send: %v", err)
+		}
+	})
+	return nil
 }
 
 // sample reads /proc/loadavg and returns the 1-minute load average,

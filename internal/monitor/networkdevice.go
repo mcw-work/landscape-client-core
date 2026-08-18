@@ -53,48 +53,42 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 		}
 	}
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.beat(p.Name())
-			devices, speeds, err := p.collect()
-			if err != nil {
-				log.Printf("network-device: %v", err)
-				continue
-			}
-			combined := []any{devices, speeds}
-			data, err := json.Marshal(combined)
-			if err != nil {
-				log.Printf("network-device: marshal: %v", err)
-				continue
-			}
-			hash := fmt.Sprintf("%x", sha256.Sum256(data))
-			if hash == saved.Hash {
-				continue
-			}
-			if state != nil {
-				if err := state.SetPluginState(networkDeviceState{Hash: hash}); err != nil {
-					// Do not advance the in-memory hash: if the save failed, the
-					// change must be re-detected and re-sent next tick.
-					log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
-					continue
-				}
-			}
-			saved.Hash = hash
-			msg := exchange.Message{
-				"type":          "network-device",
-				"devices":       devices,
-				"device-speeds": speeds,
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("network-device: send: %v", err)
+	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		devices, speeds, err := p.collect()
+		if err != nil {
+			log.Printf("network-device: %v", err)
+			return
+		}
+		combined := []any{devices, speeds}
+		data, err := json.Marshal(combined)
+		if err != nil {
+			log.Printf("network-device: marshal: %v", err)
+			return
+		}
+		hash := fmt.Sprintf("%x", sha256.Sum256(data))
+		if hash == saved.Hash {
+			return
+		}
+		if state != nil {
+			if err := state.SetPluginState(networkDeviceState{Hash: hash}); err != nil {
+				// Do not advance the in-memory hash: if the save failed, the
+				// change must be re-detected and re-sent next tick.
+				log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+				return
 			}
 		}
-	}
+		saved.Hash = hash
+		msg := exchange.Message{
+			"type":          "network-device",
+			"devices":       devices,
+			"device-speeds": speeds,
+		}
+		if err := sink.Send(ctx, msg); err != nil {
+			log.Printf("network-device: send: %v", err)
+		}
+	})
+	return nil
 }
 
 func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {

@@ -64,87 +64,81 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 		}
 	}
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.beat(p.Name())
-			now := time.Now().Unix()
-			mounts, err := p.readMounts()
-			if err != nil {
-				log.Printf("mount-info: %v", err)
+	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		now := time.Now().Unix()
+		mounts, err := p.readMounts()
+		if err != nil {
+			log.Printf("mount-info: %v", err)
+			return
+		}
+
+		var hashEntries []any
+		var mountInfoEntries []any
+		var freeSpaceEntries []any
+
+		for _, m := range mounts {
+			mountPoint, ok := m["mount-point"].(string)
+			if !ok {
+				log.Printf("mount-info: unexpected type for mount-point: %T", m["mount-point"])
+				continue
+			}
+			totalSpace, ok := m["total-space"].(int64)
+			if !ok {
+				log.Printf("mount-info: unexpected type for total-space: %T", m["total-space"])
+				continue
+			}
+			freeSpace, ok := m["free-space"].(int64)
+			if !ok {
+				log.Printf("mount-info: unexpected type for free-space: %T", m["free-space"])
 				continue
 			}
 
-			var hashEntries []any
-			var mountInfoEntries []any
-			var freeSpaceEntries []any
-
-			for _, m := range mounts {
-				mountPoint, ok := m["mount-point"].(string)
-				if !ok {
-					log.Printf("mount-info: unexpected type for mount-point: %T", m["mount-point"])
-					continue
-				}
-				totalSpace, ok := m["total-space"].(int64)
-				if !ok {
-					log.Printf("mount-info: unexpected type for total-space: %T", m["total-space"])
-					continue
-				}
-				freeSpace, ok := m["free-space"].(int64)
-				if !ok {
-					log.Printf("mount-info: unexpected type for free-space: %T", m["free-space"])
-					continue
-				}
-
-				mountInfoMap := map[string]any{
-					"device":      m["device"],
-					"mount-point": mountPoint,
-					"filesystem":  m["filesystem"],
-					"total-space": totalSpace,
-				}
-				hashEntries = append(hashEntries, mountInfoMap)
-				mountInfoEntries = append(mountInfoEntries, bpickle.Tuple{now, mountInfoMap})
-				freeSpaceEntries = append(freeSpaceEntries, bpickle.Tuple{now, mountPoint, freeSpace})
+			mountInfoMap := map[string]any{
+				"device":      m["device"],
+				"mount-point": mountPoint,
+				"filesystem":  m["filesystem"],
+				"total-space": totalSpace,
 			}
+			hashEntries = append(hashEntries, mountInfoMap)
+			mountInfoEntries = append(mountInfoEntries, bpickle.Tuple{now, mountInfoMap})
+			freeSpaceEntries = append(freeSpaceEntries, bpickle.Tuple{now, mountPoint, freeSpace})
+		}
 
-			layoutData, _ := json.Marshal(hashEntries)
-			hash := fmt.Sprintf("%x", sha256.Sum256(layoutData))
-			if hash != saved.Hash {
-				if state != nil {
-					if err := state.SetPluginState(mountInfoState{Hash: hash}); err != nil {
-						// Do not advance the in-memory hash: if the save failed, the
-						// change must be re-detected and re-sent next tick.
-						log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
-						continue
-					}
-				}
-				saved.Hash = hash
-				if mountInfoEntries != nil {
-					msg := exchange.Message{
-						"type":       "mount-info",
-						"mount-info": mountInfoEntries,
-					}
-					if err := sink.Send(ctx, msg); err != nil {
-						log.Printf("mount-info: send mount-info: %v", err)
-					}
+		layoutData, _ := json.Marshal(hashEntries)
+		hash := fmt.Sprintf("%x", sha256.Sum256(layoutData))
+		if hash != saved.Hash {
+			if state != nil {
+				if err := state.SetPluginState(mountInfoState{Hash: hash}); err != nil {
+					// Do not advance the in-memory hash: if the save failed, the
+					// change must be re-detected and re-sent next tick.
+					log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+					return
 				}
 			}
-
-			if freeSpaceEntries != nil {
+			saved.Hash = hash
+			if mountInfoEntries != nil {
 				msg := exchange.Message{
-					"type":       "free-space",
-					"free-space": freeSpaceEntries,
+					"type":       "mount-info",
+					"mount-info": mountInfoEntries,
 				}
 				if err := sink.Send(ctx, msg); err != nil {
-					log.Printf("mount-info: send free-space: %v", err)
+					log.Printf("mount-info: send mount-info: %v", err)
 				}
 			}
 		}
-	}
+
+		if freeSpaceEntries != nil {
+			msg := exchange.Message{
+				"type":       "free-space",
+				"free-space": freeSpaceEntries,
+			}
+			if err := sink.Send(ctx, msg); err != nil {
+				log.Printf("mount-info: send free-space: %v", err)
+			}
+		}
+	})
+	return nil
 }
 
 func (p *MountInfo) readMounts() ([]map[string]any, error) {

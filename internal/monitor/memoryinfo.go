@@ -38,28 +38,22 @@ func (p *MemoryInfo) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic memory information collection loop.
 func (p *MemoryInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case t := <-ticker.C:
-			p.beat(p.Name())
-			freeMemMB, freeSwapMB, err := p.sample()
-			if err != nil {
-				log.Printf("memory-info: %v", err)
-				continue
-			}
-			msg := exchange.Message{
-				"type":        "memory-info",
-				"memory-info": []any{bpickle.Tuple{t.Unix(), freeMemMB, freeSwapMB}},
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("memory-info: send: %v", err)
-			}
+	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, t time.Time) {
+		p.beat(p.Name())
+		freeMemMB, freeSwapMB, err := p.sample()
+		if err != nil {
+			log.Printf("memory-info: %v", err)
+			return
 		}
-	}
+		msg := exchange.Message{
+			"type":        "memory-info",
+			"memory-info": []any{bpickle.Tuple{t.Unix(), freeMemMB, freeSwapMB}},
+		}
+		if err := sink.Send(ctx, msg); err != nil {
+			log.Printf("memory-info: send: %v", err)
+		}
+	})
+	return nil
 }
 
 // sample reads /proc/meminfo and returns free memory and free swap in megabytes.

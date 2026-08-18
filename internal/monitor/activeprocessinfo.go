@@ -56,27 +56,21 @@ func (p *ActiveProcessInfo) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic process info collection loop.
 func (p *ActiveProcessInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.beat(p.Name())
-			msg, err := p.buildMessage()
-			if err != nil {
-				log.Printf("active-process-info: %v", err)
-				continue
-			}
-			if msg == nil {
-				continue
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("active-process-info: send: %v", err)
-			}
+	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		msg, err := p.buildMessage()
+		if err != nil {
+			log.Printf("active-process-info: %v", err)
+			return
 		}
-	}
+		if msg == nil {
+			return
+		}
+		if err := sink.Send(ctx, msg); err != nil {
+			log.Printf("active-process-info: send: %v", err)
+		}
+	})
+	return nil
 }
 
 // buildMessage reads current processes and constructs a diff message.

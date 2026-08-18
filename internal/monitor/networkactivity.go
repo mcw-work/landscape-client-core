@@ -50,33 +50,27 @@ func (p *NetworkActivity) Run(ctx context.Context, sink exchange.MessageSink, _ 
 		p.lastRx, p.lastTx = rx, tx
 	}
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case t := <-ticker.C:
-			p.beat(p.Name())
-			rx, tx, err := p.readDev()
-			if err != nil {
-				log.Printf("network-activity: %v", err)
-				continue
-			}
-			activities := p.delta(t.Unix(), rx, tx)
-			p.lastRx, p.lastTx = rx, tx
-			if len(activities) == 0 {
-				continue
-			}
-			msg := exchange.Message{
-				"type":       "network-activity",
-				"activities": activities,
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("network-activity: send: %v", err)
-			}
+	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, t time.Time) {
+		p.beat(p.Name())
+		rx, tx, err := p.readDev()
+		if err != nil {
+			log.Printf("network-activity: %v", err)
+			return
 		}
-	}
+		activities := p.delta(t.Unix(), rx, tx)
+		p.lastRx, p.lastTx = rx, tx
+		if len(activities) == 0 {
+			return
+		}
+		msg := exchange.Message{
+			"type":       "network-activity",
+			"activities": activities,
+		}
+		if err := sink.Send(ctx, msg); err != nil {
+			log.Printf("network-activity: send: %v", err)
+		}
+	})
+	return nil
 }
 
 // readDev parses /proc/net/dev and returns per-interface rx and tx byte counts.

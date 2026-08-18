@@ -72,43 +72,37 @@ func (p *UserMonitor) Run(ctx context.Context, sink exchange.MessageSink, state 
 		saved.Groups = make(map[string]groupRecord)
 	}
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.beat(p.Name())
-			newUsers, err := p.parsePasswd()
-			if err != nil {
-				// An unreadable source file means "unknown", never "empty":
-				// diffing against an empty map tells the server to delete every
-				// user, and persisting it re-creates them all on the next tick.
-				log.Printf("users: parsing passwd: %v; skipping tick", err)
-				continue
-			}
-			newGroups, err := p.parseGroup(newUsers)
-			if err != nil {
-				log.Printf("users: parsing group: %v; skipping tick", err)
-				continue
-			}
-			msg := buildUsersDiff(saved.Users, newUsers, saved.Groups, newGroups)
-			if msg != nil {
-				msg["type"] = "users"
-				if err := sink.Send(ctx, msg); err != nil {
-					log.Printf("users: send: %v", err)
-				}
-			}
-			saved.Users = newUsers
-			saved.Groups = newGroups
-			if state != nil {
-				if err := state.SetPluginState(saved); err != nil {
-					log.Printf("users: saving state: %v", err)
-				}
+	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		newUsers, err := p.parsePasswd()
+		if err != nil {
+			// An unreadable source file means "unknown", never "empty":
+			// diffing against an empty map tells the server to delete every
+			// user, and persisting it re-creates them all on the next tick.
+			log.Printf("users: parsing passwd: %v; skipping tick", err)
+			return
+		}
+		newGroups, err := p.parseGroup(newUsers)
+		if err != nil {
+			log.Printf("users: parsing group: %v; skipping tick", err)
+			return
+		}
+		msg := buildUsersDiff(saved.Users, newUsers, saved.Groups, newGroups)
+		if msg != nil {
+			msg["type"] = "users"
+			if err := sink.Send(ctx, msg); err != nil {
+				log.Printf("users: send: %v", err)
 			}
 		}
-	}
+		saved.Users = newUsers
+		saved.Groups = newGroups
+		if state != nil {
+			if err := state.SetPluginState(saved); err != nil {
+				log.Printf("users: saving state: %v", err)
+			}
+		}
+	})
+	return nil
 }
 
 func (p *UserMonitor) parsePasswd() (map[string]userRecord, error) {
