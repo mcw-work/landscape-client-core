@@ -3,11 +3,11 @@ package monitor
 import (
 	"context"
 	"log"
-	"os/exec"
 	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
 	"github.com/canonical/landscape-client-core/internal/persist"
+	"github.com/canonical/landscape-client-core/internal/runcmd"
 )
 
 // HardwareInfo collects hardware information via lshw and reports it to the
@@ -44,7 +44,8 @@ func (p *HardwareInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *pe
 }
 
 func (p *HardwareInfo) tick(ctx context.Context, sink exchange.MessageSink) {
-	out, err := exec.CommandContext(ctx, "lshw", "-xml", "-quiet").Output()
+	// The per-run lshw timeout is added in Task 12; 0 means bound by ctx only.
+	out, err := runcmd.Run(ctx, 0, "lshw", "-xml", "-quiet")
 	if err != nil {
 		log.Printf("hardware-info: lshw failed: %v", err)
 		return
