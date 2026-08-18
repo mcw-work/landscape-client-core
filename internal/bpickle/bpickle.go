@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -180,7 +180,7 @@ func marshalBytesKeyMap(v BytesDict) ([]byte, error) {
 	for k := range v {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 
 	result := []byte{'d'}
 	for _, k := range keys {
@@ -207,7 +207,7 @@ func marshalDict(v map[string]any) ([]byte, error) {
 	for k := range v {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 
 	result := []byte{'d'}
 	for _, k := range keys {

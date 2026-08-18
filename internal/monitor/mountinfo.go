@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -115,14 +116,16 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 			slog.Warn("mount-info: cannot marshal layout, skipping tick", "error", err)
 			return
 		}
-		layoutHash := fmt.Sprintf("%x", sha256.Sum256(layoutData))
+		layoutSum := sha256.Sum256(layoutData)
+		layoutHash := hex.EncodeToString(layoutSum[:])
 
 		freeData, err := json.Marshal(freeSpaceHashEntries)
 		if err != nil {
 			slog.Warn("mount-info: cannot marshal free-space, skipping tick", "error", err)
 			return
 		}
-		freeSpaceHash := fmt.Sprintf("%x", sha256.Sum256(freeData))
+		freeSum := sha256.Sum256(freeData)
+		freeSpaceHash := hex.EncodeToString(freeSum[:])
 
 		layoutChanged := layoutHash != saved.Hash
 		freeSpaceChanged := freeSpaceHash != saved.FreeSpaceHash

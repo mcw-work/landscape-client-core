@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -97,7 +97,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		for name := range failed {
 			names = append(names, name)
 		}
-		sort.Strings(names)
+		slices.Sort(names)
 		return fmt.Errorf("monitor: plugins failed: %s (last error for %s: %w)",
 			strings.Join(names, ", "), names[0], failed[names[0]])
 	}

@@ -5,8 +5,8 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"os"
 	"runtime"
@@ -75,7 +75,8 @@ func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, stat
 			slog.Warn("processor-info: cannot marshal", "error", err)
 			return
 		}
-		hash := fmt.Sprintf("%x", sha256.Sum256(data))
+		sum := sha256.Sum256(data)
+		hash := hex.EncodeToString(sum[:])
 		if hash == saved.Hash {
 			return
 		}
@@ -127,12 +128,12 @@ func (p *ProcessorInfo) parseX86() []map[string]any {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
+		rawKey, rawValue, ok := strings.Cut(line, ":")
+		if !ok {
 			continue
 		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
+		key := strings.TrimSpace(rawKey)
+		value := strings.TrimSpace(rawValue)
 		switch key {
 		case "processor":
 			id, err := strconv.Atoi(value)
@@ -196,12 +197,12 @@ func (p *ProcessorInfo) parseARM64() []map[string]any {
 			finalize()
 			continue
 		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
+		rawKey, rawValue, ok := strings.Cut(line, ":")
+		if !ok {
 			continue
 		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
+		key := strings.TrimSpace(rawKey)
+		value := strings.TrimSpace(rawValue)
 		switch key {
 		case "processor":
 			id, err := strconv.Atoi(value)

@@ -1,7 +1,7 @@
 package monitor
 
 import (
-	"sort"
+	"slices"
 	"sync"
 	"time"
 )
@@ -55,7 +55,7 @@ func (h *Heartbeat) Stale(threshold time.Duration) []string {
 			stale = append(stale, source)
 		}
 	}
-	sort.Strings(stale)
+	slices.Sort(stale)
 	return stale
 }
 
@@ -79,7 +79,7 @@ func (h *Heartbeat) StaleSources(thresholds map[string]time.Duration) []string {
 			stale = append(stale, source)
 		}
 	}
-	sort.Strings(stale)
+	slices.Sort(stale)
 	return stale
 }
 

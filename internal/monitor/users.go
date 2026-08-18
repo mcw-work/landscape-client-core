@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -205,7 +205,7 @@ func (p *UserMonitor) parseGroup(users map[string]userRecord) (map[string]groupR
 		if members == nil {
 			members = []string{}
 		}
-		sort.Strings(members)
+		slices.Sort(members)
 		groups[groupName] = groupRecord{
 			Name:    groupName,
 			GID:     gid,
@@ -242,7 +242,7 @@ func buildUsersDiff(
 		msg["update-users"] = updateUsers
 	}
 	if len(deleteUsers) > 0 {
-		sort.Strings(deleteUsers)
+		slices.Sort(deleteUsers)
 		msg["delete-users"] = deleteUsers
 	}
 
@@ -281,11 +281,11 @@ func buildUsersDiff(
 				}
 			}
 			if len(added) > 0 {
-				sort.Strings(added)
+				slices.Sort(added)
 				createGroupMembers[groupName] = added
 			}
 			if len(removed) > 0 {
-				sort.Strings(removed)
+				slices.Sort(removed)
 				deleteGroupMembers[groupName] = removed
 			}
 		}
@@ -303,7 +303,7 @@ func buildUsersDiff(
 		msg["update-groups"] = updateGroups
 	}
 	if len(deleteGroups) > 0 {
-		sort.Strings(deleteGroups)
+		slices.Sort(deleteGroups)
 		msg["delete-groups"] = deleteGroups
 	}
 	if len(createGroupMembers) > 0 {

@@ -12,7 +12,6 @@ import (
 	"os"
 	"runtime/debug"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -478,7 +477,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			clientTypes = append(clientTypes, t)
 		}
 		e.mu.Unlock()
-		sort.Strings(clientTypes)
+		slices.Sort(clientTypes)
 		typesAny := make([]any, len(clientTypes))
 		for i, t := range clientTypes {
 			typesAny[i] = t

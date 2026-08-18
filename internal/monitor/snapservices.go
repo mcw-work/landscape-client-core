@@ -1,12 +1,13 @@
 package monitor
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
@@ -64,8 +65,8 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 			return
 		}
 		// Sort by name for stable hashing and consistent output.
-		sort.Slice(services, func(i, j int) bool {
-			return services[i].Name < services[j].Name
+		slices.SortFunc(services, func(a, b snapd.ServiceInfo) int {
+			return cmp.Compare(a.Name, b.Name)
 		})
 		hash := hashSnapServices(services)
 		if hash == prevHash {
@@ -106,5 +107,6 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 // slice. The caller must sort the slice before calling this function.
 func hashSnapServices(services []snapd.ServiceInfo) string {
 	data, _ := json.Marshal(services)
-	return fmt.Sprintf("%x", sha256.Sum256(data))
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }

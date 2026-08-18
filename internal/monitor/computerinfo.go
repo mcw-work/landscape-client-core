@@ -226,12 +226,12 @@ func (p *ComputerInfo) readOSRelease() (distributorID, description, release, cod
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
+		rawKey, rawValue, ok := strings.Cut(line, "=")
+		if !ok {
 			continue
 		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
+		key := strings.TrimSpace(rawKey)
+		value := strings.TrimSpace(rawValue)
 		value = strings.Trim(value, `"`)
 		switch key {
 		case "NAME":

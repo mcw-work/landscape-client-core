@@ -1,15 +1,17 @@
 package monitor
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -66,7 +68,8 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 			slog.Warn("network-device: cannot marshal", "error", err)
 			return
 		}
-		hash := fmt.Sprintf("%x", sha256.Sum256(data))
+		sum := sha256.Sum256(data)
+		hash := hex.EncodeToString(sum[:])
 		if hash == saved.Hash {
 			return
 		}
@@ -97,8 +100,8 @@ func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 		return nil, nil, fmt.Errorf("cannot list interfaces: %w", err)
 	}
 
-	sort.Slice(ifaces, func(i, j int) bool {
-		return ifaces[i].Name < ifaces[j].Name
+	slices.SortFunc(ifaces, func(a, b net.Interface) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 
 	var devices []map[string]any
@@ -228,7 +231,7 @@ func translateGoFlags(f net.Flags) int {
 }
 
 func (p *NetworkDevice) readSpeed(iface string) int {
-	path := fmt.Sprintf("%s/%s/speed", p.sysNetPath, iface)
+	path := filepath.Join(p.sysNetPath, iface, "speed")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return -1
@@ -241,7 +244,7 @@ func (p *NetworkDevice) readSpeed(iface string) int {
 }
 
 func (p *NetworkDevice) readDuplex(iface string) bool {
-	path := fmt.Sprintf("%s/%s/duplex", p.sysNetPath, iface)
+	path := filepath.Join(p.sysNetPath, iface, "duplex")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false

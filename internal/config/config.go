@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -91,7 +91,7 @@ func Load(l Loader) (*Config, error) {
 	}
 
 	if len(missing) > 0 {
-		sort.Strings(missing)
+		slices.Sort(missing)
 		return nil, fmt.Errorf("missing required config: %s", strings.Join(missing, ", "))
 	}
 
