@@ -22,7 +22,8 @@ apps:
     daemon: simple
     restart-condition: on-failure
     environment:
-      GOGC: "50"
+      GOMEMLIMIT: "64MiB"
+      GOMAXPROCS: "2"
     plugs:
       - network
       - snapd-control
