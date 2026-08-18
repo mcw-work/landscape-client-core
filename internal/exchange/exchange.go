@@ -23,6 +23,9 @@ import (
 
 const apiVersion = "3.3"
 
+// maxMessagesPerExchange matches the Python client's max_messages.
+const maxMessagesPerExchange = 100
+
 const (
 	backoffMin = 300 * time.Second
 	backoffMax = 7200 * time.Second
@@ -348,11 +351,17 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			e.cfg.AccountName, e.cfg.ComputerTitle, e.cfg.RegistrationKey != "")
 	}
 
-	// Take a snapshot of pending under lock and clear the queue.
+	// Drain at most maxMessagesPerExchange, matching Python's max_messages. A
+	// restored spool after a long outage would otherwise produce one enormous
+	// request.
 	e.mu.Lock()
-	snapshot := make([]Message, len(e.pending))
-	copy(snapshot, e.pending)
-	e.pending = nil
+	n := len(e.pending)
+	if n > maxMessagesPerExchange {
+		n = maxMessagesPerExchange
+	}
+	snapshot := make([]Message, n)
+	copy(snapshot, e.pending[:n])
+	e.pending = e.pending[n:]
 	e.mu.Unlock()
 
 	// Filter out message types the server has not declared it handles.
@@ -649,6 +658,15 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		return nil
 	}); err != nil {
 		return fmt.Errorf("exchange: saving state: %w", err)
+	}
+
+	// If messages are still queued (capped backlog or a re-queue), wake the loop
+	// so the backlog drains promptly rather than one batch per interval.
+	e.mu.Lock()
+	backlog := len(e.pending) > 0
+	e.mu.Unlock()
+	if backlog {
+		e.TriggerExchange()
 	}
 
 	return nil

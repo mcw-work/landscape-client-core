@@ -957,3 +957,64 @@ func TestBackoff_JitterVaries(t *testing.T) {
 		t.Error("backoff has no jitter; a fleet would retry in lockstep")
 	}
 }
+
+// TestPerformExchange_CapsMessagesPerRequest asserts a large backlog is drained
+// across several exchanges rather than sent as one enormous request.
+func TestPerformExchange_CapsMessagesPerRequest(t *testing.T) {
+	srv := &fakeServer{}
+	for i := 0; i < 10; i++ {
+		srv.push(map[string]any{
+			// ACK the 100 messages sent in the first exchange so they are not
+			// re-queued; only the un-sent remainder must stay queued.
+			"next-expected-sequence": int64(100),
+			"next-exchange-token":    "tok",
+			"messages":               []any{},
+		})
+	}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	tc, err := transport.New(transport.Config{})
+	if err != nil {
+		t.Fatalf("transport.New: %v", err)
+	}
+	store := persist.New(t.TempDir() + "/state.json")
+	st, _ := store.Load()
+	st.SecureID = "already-registered"
+	if err := store.Save(st); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	cfg := &config.Config{URL: ts.URL, AccountName: "acc"}
+	exc := New(cfg, store, tc)
+
+	for i := 0; i < 250; i++ {
+		if err := exc.Send(context.Background(), Message{"type": "cpu-usage"}); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+	}
+
+	state, _ := store.Load()
+	if err := exc.performExchange(context.Background(), state); err != nil {
+		t.Fatalf("performExchange: %v", err)
+	}
+
+	if srv.count() != 1 {
+		t.Fatalf("want 1 request, got %d", srv.count())
+	}
+	msgs, ok := srv.get(0).payload["messages"].([]any)
+	if !ok {
+		t.Fatalf("messages: unexpected type %T", srv.get(0).payload["messages"])
+	}
+	if len(msgs) > 100 {
+		t.Errorf("sent %d messages in one exchange; the cap is 100", len(msgs))
+	}
+
+	// The remainder must still be queued, not dropped.
+	exc.mu.Lock()
+	remaining := len(exc.pending)
+	exc.mu.Unlock()
+	if remaining != 150 {
+		t.Errorf("want 150 messages still queued, got %d", remaining)
+	}
+}
