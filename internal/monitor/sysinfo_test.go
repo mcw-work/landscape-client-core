@@ -1114,3 +1114,50 @@ carol:x:1002:1002:Carol:/home/carol:/bin/bash
 		t.Errorf("expected carol in create-users, got %v", createUsers)
 	}
 }
+
+// TestUsers_ReadFailureDoesNotDeleteEveryone asserts a transient passwd read
+// error is treated as "unknown", not "no users exist". Substituting an empty
+// map makes the client tell the server to delete every user and group.
+func TestUsers_ReadFailureDoesNotDeleteEveryone(t *testing.T) {
+	dir := t.TempDir()
+	passwdPath := filepath.Join(dir, "passwd")
+	groupPath := filepath.Join(dir, "group")
+
+	writeFixture(t, passwdPath, "root:x:0:0:root:/root:/bin/bash\nalice:x:1000:1000:Alice:/home/alice:/bin/sh\n")
+	writeFixture(t, groupPath, "root:x:0:\nsudo:x:27:alice\n")
+
+	p := &UserMonitor{
+		interval:   5 * time.Millisecond,
+		passwdPath: passwdPath,
+		groupPath:  groupPath,
+	}
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+
+	// First tick reports the initial users.
+	waitForMessages(t, sink, 1, 500*time.Millisecond)
+
+	// Make passwd unreadable, simulating a transient failure.
+	if err := os.Remove(passwdPath); err != nil {
+		t.Fatalf("remove passwd: %v", err)
+	}
+	before := len(sink.Messages())
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-errCh
+
+	for _, msg := range sink.Messages()[before:] {
+		if v, ok := msg["delete-users"]; ok {
+			t.Errorf("emitted delete-users %v after a transient read failure", v)
+		}
+		if v, ok := msg["delete-groups"]; ok {
+			t.Errorf("emitted delete-groups %v after a transient read failure", v)
+		}
+	}
+}
