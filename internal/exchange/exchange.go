@@ -121,6 +121,9 @@ type Exchange struct {
 	handlers   map[string][]func(ctx context.Context, msg Message)
 	insecureID string        // guarded by mu; updated from set-id messages
 	wake       chan struct{} // buffered(1); written by TriggerExchange
+	// spool persists the pending queue across restarts. nil disables persistence
+	// (used by tests that do not exercise durability).
+	spool *spool
 	// dispatchCtx is the daemon-lifetime context used to run inbound message
 	// handlers. Handler lifetime must not be tied to the exchange cycle:
 	// manager.Runner dispatches into a goroutine and returns immediately, so a
@@ -136,6 +139,34 @@ func New(cfg *config.Config, store *persist.Store, tc *transport.Client) *Exchan
 		transport: tc,
 		handlers:  make(map[string][]func(ctx context.Context, msg Message)),
 		wake:      make(chan struct{}, 1),
+	}
+}
+
+// SetSpool enables durable persistence of the pending queue to the given path.
+// The queue is a separate file from state.json so a queue write can never touch
+// SecureID or the outbound sequence number.
+func (e *Exchange) SetSpool(path string) {
+	e.spool = newSpool(path)
+}
+
+// persistQueue bounds and writes the queue. Called after every mutation so an
+// unexpected restart loses at most the messages queued since the last exchange.
+func (e *Exchange) persistQueue() {
+	if e.spool == nil {
+		return
+	}
+	e.mu.Lock()
+	kept, dropped := enforceQueueBound(e.pending)
+	e.pending = kept
+	snapshot := make([]Message, len(kept))
+	copy(snapshot, kept)
+	e.mu.Unlock()
+
+	if dropped > 0 {
+		log.Printf("exchange: queue full; dropped %d oldest telemetry message(s), operation results retained", dropped)
+	}
+	if err := e.spool.save(snapshot); err != nil {
+		log.Printf("exchange: %v", err)
 	}
 }
 
@@ -178,11 +209,29 @@ func (e *Exchange) Run(ctx context.Context) error {
 	e.dispatchCtx = ctx
 	e.mu.Unlock()
 
+	// Restore any messages queued before the last restart, prepending them so
+	// they are sent before newly generated telemetry.
+	if e.spool != nil {
+		restored, err := e.spool.load()
+		if err != nil {
+			log.Printf("exchange: %v", err)
+		} else if len(restored) > 0 {
+			e.mu.Lock()
+			e.pending = append(restored, e.pending...)
+			e.mu.Unlock()
+			log.Printf("exchange: restored %d queued message(s) from the spool", len(restored))
+		}
+	}
+
 	bo := newBackoff()
 
 	for {
 		prevSecureID := state.SecureID
 		err := e.performExchange(ctx, state)
+		// Persist after every exchange attempt: performExchange re-queues on
+		// transport failure and on a partial server ACK, so this covers both the
+		// success and error paths.
+		e.persistQueue()
 		if err != nil {
 			log.Printf("exchange: exchange failed: %v", err)
 			var httpErr *transport.HTTPError
@@ -246,6 +295,9 @@ func (e *Exchange) Run(ctx context.Context) error {
 			if err := e.performExchange(graceCtx, state); err != nil {
 				log.Printf("exchange: final drain exchange failed: %v", err)
 			}
+			// Persist whatever remains so a shutdown (including a snap refresh)
+			// does not drop unsent messages.
+			e.persistQueue()
 			return nil
 		}
 	}
