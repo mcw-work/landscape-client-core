@@ -38,6 +38,7 @@ func newTransport(t *testing.T) *transport.Client {
 // TestPing_TriggersExchangeWhenMessagesTrue verifies that doPing returns true
 // and TriggerExchange is called when the server says messages=True.
 func TestPing_TriggersExchangeWhenMessagesTrue(t *testing.T) {
+	t.Parallel()
 	var triggered atomic.Bool
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +76,7 @@ func TestPing_TriggersExchangeWhenMessagesTrue(t *testing.T) {
 // TestPing_NoTriggerWhenMessagesFalse verifies TriggerExchange is NOT called
 // when the server says messages=False.
 func TestPing_NoTriggerWhenMessagesFalse(t *testing.T) {
+	t.Parallel()
 	var triggered atomic.Bool
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +99,7 @@ func TestPing_NoTriggerWhenMessagesFalse(t *testing.T) {
 // TestPing_SkipsWhenNotRegistered verifies that pings are skipped when
 // getInsecureID returns empty string.
 func TestPing_SkipsWhenNotRegistered(t *testing.T) {
+	t.Parallel()
 	var pinged atomic.Bool
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +124,7 @@ func TestPing_SkipsWhenNotRegistered(t *testing.T) {
 // TestPing_HandlesServerError verifies that HTTP errors are logged and the
 // loop continues without crashing.
 func TestPing_HandlesServerError(t *testing.T) {
+	t.Parallel()
 	var triggered atomic.Bool
 	var callCount atomic.Int32
 
