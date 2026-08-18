@@ -53,7 +53,7 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 		}
 	}
 
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
 		p.beat(p.Name())
 		devices, speeds, err := p.collect()
 		if err != nil {

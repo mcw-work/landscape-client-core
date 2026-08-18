@@ -56,7 +56,7 @@ func (p *ActiveProcessInfo) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic process info collection loop.
 func (p *ActiveProcessInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
 		p.beat(p.Name())
 		msg, err := p.buildMessage()
 		if err != nil {

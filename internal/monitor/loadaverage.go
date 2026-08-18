@@ -37,7 +37,7 @@ func (p *LoadAverage) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic load average collection loop.
 func (p *LoadAverage) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, t time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, t time.Time) {
 		p.beat(p.Name())
 		load, err := p.sample()
 		if err != nil {

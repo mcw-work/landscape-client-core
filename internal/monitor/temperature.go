@@ -39,7 +39,7 @@ func (p *Temperature) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic temperature collection loop.
 func (p *Temperature) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, t time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, t time.Time) {
 		p.beat(p.Name())
 		zones, err := p.readZones()
 		if err != nil {

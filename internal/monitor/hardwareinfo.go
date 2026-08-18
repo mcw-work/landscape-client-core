@@ -48,7 +48,7 @@ func (p *HardwareInfo) Interval() time.Duration { return p.interval }
 // Run sends hardware info immediately on startup, then once per day.
 func (p *HardwareInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	p.tick(ctx, sink)
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
 		p.beat(p.Name())
 		p.tick(ctx, sink)
 	})

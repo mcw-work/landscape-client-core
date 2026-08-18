@@ -48,7 +48,7 @@ func (p *CPUUsage) Run(ctx context.Context, sink exchange.MessageSink, _ *persis
 		log.Printf("cpu-usage: priming baseline: %v", err)
 	}
 
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, t time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, t time.Time) {
 		p.beat(p.Name())
 		usage, err := p.sample()
 		if err != nil {

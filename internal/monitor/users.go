@@ -72,7 +72,7 @@ func (p *UserMonitor) Run(ctx context.Context, sink exchange.MessageSink, state 
 		saved.Groups = make(map[string]groupRecord)
 	}
 
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
 		p.beat(p.Name())
 		newUsers, err := p.parsePasswd()
 		if err != nil {

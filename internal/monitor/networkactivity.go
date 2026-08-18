@@ -50,7 +50,7 @@ func (p *NetworkActivity) Run(ctx context.Context, sink exchange.MessageSink, _ 
 		p.lastRx, p.lastTx = rx, tx
 	}
 
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, t time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, t time.Time) {
 		p.beat(p.Name())
 		rx, tx, err := p.readDev()
 		if err != nil {

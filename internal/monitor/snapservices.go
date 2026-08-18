@@ -54,7 +54,7 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 		}
 	}
 
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
 		p.beat(p.Name())
 		callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
 		services, err := p.snapdClient.ListServices(callCtx)

@@ -38,7 +38,7 @@ func (p *MemoryInfo) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic memory information collection loop.
 func (p *MemoryInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, t time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, t time.Time) {
 		p.beat(p.Name())
 		freeMemMB, freeSwapMB, err := p.sample()
 		if err != nil {

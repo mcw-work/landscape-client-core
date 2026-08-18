@@ -64,7 +64,7 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 		}
 	}
 
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
 		p.beat(p.Name())
 		now := time.Now().Unix()
 		mounts, err := p.readMounts()

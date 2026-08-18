@@ -37,7 +37,7 @@ func (p *SnapPackagesPlugin) Interval() time.Duration { return p.interval }
 // installed list to keep the server in sync.
 func (p *SnapPackagesPlugin) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	p.send(ctx, sink)
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
 		p.beat(p.Name())
 		p.send(ctx, sink)
 	})

@@ -95,7 +95,7 @@ func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, stat
 
 	doSend()
 
-	runTicker(ctx, p.interval, false, 0, func(context.Context, time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(context.Context, time.Time) {
 		p.beat(p.Name())
 		doSend()
 	})

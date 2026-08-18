@@ -53,7 +53,9 @@ func (p *RebootRequiredPlugin) Run(ctx context.Context, sink exchange.MessageSin
 		}
 	}
 
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+	// Python's rebootrequired sets run_immediately = True: a device that has just
+	// rebooted should not wait 5 minutes to tell the server it still needs one.
+	runTicker(ctx, p.interval, true, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
 		p.beat(p.Name())
 		callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
 		flag, err := p.snapd.GetRebootRequired(callCtx)

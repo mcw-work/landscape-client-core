@@ -62,7 +62,7 @@ func (p *ComputerInfo) Run(ctx context.Context, sink exchange.MessageSink, state
 
 	p.tick(ctx, sink, state, &prev)
 
-	runTicker(ctx, p.interval, false, 0, func(ctx context.Context, _ time.Time) {
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
 		p.beat(p.Name())
 		p.tick(ctx, sink, state, &prev)
 	})
