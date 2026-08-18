@@ -264,12 +264,13 @@ func run(ctx context.Context, d deps) error {
 	}()
 
 	// Wait for shutdown signal or the first runner error.
+	var groupErr error
 	select {
 	case <-ctx.Done():
 		slog.Info("shutting down")
-	case err := <-groupDone:
-		if err != nil {
-			slog.Error("first runner error", "error", err)
+	case groupErr = <-groupDone:
+		if groupErr != nil {
+			slog.Error("first runner error", "error", groupErr)
 		}
 		cancel()
 		slog.Info("shutting down")
@@ -279,14 +280,18 @@ func run(ctx context.Context, d deps) error {
 		slog.Error("error waiting for manager runner", "error", err)
 	}
 
-	// Wait up to 5s for goroutines to finish.
-	select {
-	case err := <-groupDone:
-		if err != nil {
-			slog.Error("runner group exited with error", "error", err)
+	// If the group has not already reported, wait for it now. When the first
+	// select already drained groupDone, reading again would block the full grace
+	// period for a value that will never arrive.
+	if groupErr == nil {
+		select {
+		case err := <-groupDone:
+			if err != nil {
+				slog.Error("runner group exited with error", "error", err)
+			}
+		case <-time.After(5 * time.Second):
+			slog.Warn("shutdown timeout, exiting")
 		}
-	case <-time.After(5 * time.Second):
-		slog.Warn("shutdown timeout, exiting")
 	}
 
 	return nil
