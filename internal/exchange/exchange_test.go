@@ -883,3 +883,77 @@ func TestSendUrgent_TriggersAnExchange(t *testing.T) {
 		t.Error("an operation-result did not trigger an exchange")
 	}
 }
+
+// TestBackoff_EscalatesOn5xx asserts repeated server errors increase the delay
+// rather than retrying at a fixed interval, which lets a fleet hammer an
+// already-struggling server.
+func TestBackoff_EscalatesOn5xx(t *testing.T) {
+	b := newBackoff()
+
+	if d := b.current(); d != 0 {
+		t.Errorf("initial backoff should be zero, got %v", d)
+	}
+
+	b.failure(500)
+	first := b.current()
+	if first < 300*time.Second || first > 360*time.Second {
+		t.Errorf("first backoff should be ~300s with jitter, got %v", first)
+	}
+
+	b.failure(500)
+	second := b.current()
+	if second <= first {
+		t.Errorf("backoff should escalate: first=%v second=%v", first, second)
+	}
+
+	for i := 0; i < 20; i++ {
+		b.failure(503)
+	}
+	// current() adds up to 20% jitter on top of the capped base delay, so the
+	// bound is backoffMax plus one jitter step. The point is that the delay stays
+	// bounded near 7200s instead of growing unboundedly with every 5xx.
+	if capped := b.current(); capped > backoffMax+backoffMax/5 {
+		t.Errorf("backoff should cap near 7200s, got %v", capped)
+	}
+}
+
+func TestBackoff_DecaysOnSuccess(t *testing.T) {
+	b := newBackoff()
+	b.failure(500)
+	b.failure(500)
+	if b.current() == 0 {
+		t.Fatal("expected a non-zero backoff after failures")
+	}
+
+	b.success()
+	if d := b.current(); d != 0 {
+		t.Errorf("backoff should reset on success, got %v", d)
+	}
+}
+
+func TestBackoff_IgnoresClientErrors(t *testing.T) {
+	b := newBackoff()
+
+	// A 400 is our bug, not server overload; backing off does not help.
+	b.failure(400)
+	if d := b.current(); d != 0 {
+		t.Errorf("4xx other than 429 should not back off, got %v", d)
+	}
+
+	b.failure(429)
+	if d := b.current(); d == 0 {
+		t.Error("429 should back off")
+	}
+}
+
+func TestBackoff_JitterVaries(t *testing.T) {
+	seen := make(map[time.Duration]bool)
+	for i := 0; i < 20; i++ {
+		b := newBackoff()
+		b.failure(500)
+		seen[b.current()] = true
+	}
+	if len(seen) < 2 {
+		t.Error("backoff has no jitter; a fleet would retry in lockstep")
+	}
+}

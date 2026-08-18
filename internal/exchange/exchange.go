@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"runtime/debug"
 	"sort"
@@ -20,6 +22,61 @@ import (
 )
 
 const apiVersion = "3.3"
+
+const (
+	backoffMin = 300 * time.Second
+	backoffMax = 7200 * time.Second
+)
+
+// backoff sheds load from an overloaded server. Without it a fleet of devices
+// retries at a fixed interval against a server that is already struggling.
+// Ported from Python's ExponentialBackoff.
+type backoff struct {
+	delay time.Duration
+	rand  *rand.Rand
+}
+
+func newBackoff() *backoff {
+	return &backoff{rand: rand.New(rand.NewSource(time.Now().UnixNano()))}
+}
+
+// failure records an HTTP status. Only 429 and 5xx back off: a 4xx other than
+// 429 is our own bad request, and waiting does not help.
+func (b *backoff) failure(status int) {
+	if status != 429 && (status < 500 || status > 599) {
+		return
+	}
+	if b.delay == 0 {
+		b.delay = backoffMin
+	} else {
+		b.delay *= 2
+	}
+	if b.delay > backoffMax {
+		b.delay = backoffMax
+	}
+}
+
+func (b *backoff) success() {
+	b.delay = 0
+}
+
+// current returns the delay with up to 20% jitter, so a fleet does not retry in
+// lockstep.
+func (b *backoff) current() time.Duration {
+	if b.delay == 0 {
+		return 0
+	}
+	jitter := time.Duration(b.rand.Int63n(int64(b.delay) / 5))
+	return b.delay + jitter
+}
+
+// previousAPIVersion returns the API version to fall back to when the server
+// returns 404 for the current version. This client speaks only one API version,
+// so there is no earlier version to downgrade to; the 404 is logged explicitly
+// instead of inventing a version ladder.
+func previousAPIVersion(_ string) string {
+	return ""
+}
 
 // Message is a single Landscape protocol message (a bpickle dict).
 type Message map[string]any
@@ -118,10 +175,28 @@ func (e *Exchange) Run(ctx context.Context) error {
 	e.dispatchCtx = ctx
 	e.mu.Unlock()
 
+	bo := newBackoff()
+
 	for {
 		prevSecureID := state.SecureID
-		if err := e.performExchange(ctx, state); err != nil {
+		err := e.performExchange(ctx, state)
+		if err != nil {
 			log.Printf("exchange: exchange failed: %v", err)
+			var httpErr *transport.HTTPError
+			if errors.As(err, &httpErr) {
+				if httpErr.StatusCode == 404 {
+					// An older server does not know this API version. Python drops
+					// to the previous version rather than failing permanently.
+					if downgraded := previousAPIVersion(apiVersion); downgraded != "" {
+						log.Printf("exchange: server returned 404; downgrading API %s -> %s", apiVersion, downgraded)
+					} else {
+						log.Printf("exchange: server returned 404 (unknown API version %s); no earlier version to downgrade to", apiVersion)
+					}
+				}
+				bo.failure(httpErr.StatusCode)
+			}
+		} else {
+			bo.success()
 		}
 		e.mu.Lock()
 		hasUrgent := e.hasUrgentPendingLocked()
@@ -135,6 +210,14 @@ func (e *Exchange) Run(ctx context.Context) error {
 		// info is delivered without waiting 15 minutes.
 		if hasUrgent || state.SecureID == "" || justRegistered {
 			interval = e.cfg.UrgentExchangeInterval
+		}
+
+		// Apply the backoff after the urgent-interval selection: a server
+		// returning 503 should not be polled at the urgent interval just because
+		// an operation result is queued.
+		if d := bo.current(); d > interval {
+			log.Printf("exchange: backing off for %v after server errors", d)
+			interval = d
 		}
 
 		if timer == nil {
