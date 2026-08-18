@@ -304,7 +304,20 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 		return nil
 	}
 	if runErr != nil {
-		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 103, output)
+		text := output
+		var exitErr *exec.ExitError
+		switch {
+		case errors.As(runErr, &exitErr):
+			// The script ran and failed: keep its output, append the exit status
+			// so the operator can tell 42 from 1.
+			text = fmt.Sprintf("%s\nexit status %d", output, exitErr.ExitCode())
+		default:
+			// The interpreter could not be executed at all, so there is no script
+			// output to report — without this the Landscape UI shows a blank
+			// failure with no explanation.
+			text = fmt.Sprintf("execute-script: cannot run interpreter %s: %v", interpreterBin, runErr)
+		}
+		_ = result.SendResultCode(ctx, opID, exchange.StatusFailed, 103, text)
 		return nil
 	}
 

@@ -637,3 +637,68 @@ func TestScriptExecHandler_AttachmentPathTraversal(t *testing.T) {
 		t.Errorf("resultCode = %d, want 104", call.resultCode)
 	}
 }
+
+// TestScriptExec_ExecFailureReportsReason asserts a fork/exec failure sends the
+// reason rather than an empty result-text. On Ubuntu Core the Landscape UI may
+// be the operator's only feedback channel.
+func TestScriptExec_ExecFailureReportsReason(t *testing.T) {
+	dir := t.TempDir()
+	notExecutable := filepath.Join(dir, "not-executable")
+	if err := os.WriteFile(notExecutable, []byte("#!/bin/sh\n"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+	sink := &mockResultSink{}
+
+	msg := exchange.Message{
+		"type":         "execute-script",
+		"operation-id": int64(1),
+		"code":         "echo hi\n",
+		"interpreter":  notExecutable,
+	}
+
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if call.output == "" {
+		t.Fatal("result-text was empty: the operator sees a blank failure")
+	}
+	if !strings.Contains(call.output, "permission denied") {
+		t.Errorf("result-text should explain the failure, got %q", call.output)
+	}
+}
+
+// TestScriptExec_NonZeroExitReportsCode asserts the exit status reaches the
+// server alongside the script's own output.
+func TestScriptExec_NonZeroExitReportsCode(t *testing.T) {
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+	sink := &mockResultSink{}
+
+	msg := exchange.Message{
+		"type":         "execute-script",
+		"operation-id": int64(2),
+		"code":         "echo to-stdout; exit 42\n",
+		"interpreter":  "/bin/sh",
+	}
+
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if !strings.Contains(call.output, "to-stdout") {
+		t.Errorf("script output lost: %q", call.output)
+	}
+	if !strings.Contains(call.output, "42") {
+		t.Errorf("exit status 42 not reported: %q", call.output)
+	}
+}
