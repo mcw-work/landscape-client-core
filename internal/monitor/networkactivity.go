@@ -20,7 +20,8 @@ import (
 type NetworkActivity struct {
 	heartbeatSource
 	procNetDevPath string
-	interval       time.Duration
+	interval       time.Duration // sampling interval
+	sendInterval   time.Duration // how often buffered points are sent
 	lastRx         map[string]int64
 	lastTx         map[string]int64
 }
@@ -30,6 +31,7 @@ func NewNetworkActivity() *NetworkActivity {
 	return &NetworkActivity{
 		procNetDevPath: "/proc/net/dev",
 		interval:       30 * time.Second,
+		sendInterval:   5 * time.Minute,
 	}
 }
 
@@ -50,6 +52,8 @@ func (p *NetworkActivity) Run(ctx context.Context, sink exchange.MessageSink, _ 
 		p.lastRx, p.lastTx = rx, tx
 	}
 
+	accs := make(map[string]*accumulator)
+
 	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, t time.Time) {
 		p.beat(p.Name())
 		rx, tx, err := p.readDev()
@@ -59,12 +63,29 @@ func (p *NetworkActivity) Run(ctx context.Context, sink exchange.MessageSink, _ 
 		}
 		activities := p.delta(t.Unix(), rx, tx)
 		p.lastRx, p.lastTx = rx, tx
-		if len(activities) == 0 {
+
+		// One accumulator per interface: each interface has its own send window
+		// so batching never mixes interfaces on the wire.
+		due := make(bpickle.BytesDict)
+		for iface, entries := range activities {
+			acc, ok := accs[iface]
+			if !ok {
+				acc = newAccumulator(p.sendInterval, time.Now)
+				accs[iface] = acc
+			}
+			for _, e := range entries.([]any) {
+				acc.add(e)
+			}
+			if points := acc.drainIfDue(); points != nil {
+				due[iface] = points
+			}
+		}
+		if len(due) == 0 {
 			return
 		}
 		msg := exchange.Message{
 			"type":       "network-activity",
-			"activities": activities,
+			"activities": due,
 		}
 		if err := sink.Send(ctx, msg); err != nil {
 			log.Printf("network-activity: send: %v", err)

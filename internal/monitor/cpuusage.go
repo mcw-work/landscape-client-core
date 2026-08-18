@@ -20,7 +20,8 @@ import (
 type CPUUsage struct {
 	heartbeatSource
 	procStatPath string
-	interval     time.Duration
+	interval     time.Duration // sampling interval
+	sendInterval time.Duration // how often buffered points are sent
 	prevTotal    int64
 	prevIdle     int64
 	hasPrev      bool
@@ -31,6 +32,7 @@ func NewCPUUsage() *CPUUsage {
 	return &CPUUsage{
 		procStatPath: "/proc/stat",
 		interval:     30 * time.Second,
+		sendInterval: 5 * time.Minute,
 	}
 }
 
@@ -48,6 +50,8 @@ func (p *CPUUsage) Run(ctx context.Context, sink exchange.MessageSink, _ *persis
 		log.Printf("cpu-usage: priming baseline: %v", err)
 	}
 
+	acc := newAccumulator(p.sendInterval, time.Now)
+
 	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, t time.Time) {
 		p.beat(p.Name())
 		usage, err := p.sample()
@@ -59,9 +63,15 @@ func (p *CPUUsage) Run(ctx context.Context, sink exchange.MessageSink, _ *persis
 			// No delta available yet.
 			return
 		}
+		acc.add(bpickle.Tuple{t.Unix(), usage})
+
+		points := acc.drainIfDue()
+		if points == nil {
+			return
+		}
 		msg := exchange.Message{
 			"type":       "cpu-usage",
-			"cpu-usages": []any{bpickle.Tuple{t.Unix(), usage}},
+			"cpu-usages": points,
 		}
 		if err := sink.Send(ctx, msg); err != nil {
 			log.Printf("cpu-usage: send: %v", err)

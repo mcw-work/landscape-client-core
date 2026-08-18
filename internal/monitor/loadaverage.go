@@ -19,7 +19,8 @@ import (
 type LoadAverage struct {
 	heartbeatSource
 	procLoadavgPath string
-	interval        time.Duration
+	interval        time.Duration // sampling interval
+	sendInterval    time.Duration // how often buffered points are sent
 }
 
 // NewLoadAverage returns a LoadAverage plugin with default settings.
@@ -27,6 +28,7 @@ func NewLoadAverage() *LoadAverage {
 	return &LoadAverage{
 		procLoadavgPath: "/proc/loadavg",
 		interval:        5 * time.Minute,
+		sendInterval:    5 * time.Minute,
 	}
 }
 
@@ -37,6 +39,8 @@ func (p *LoadAverage) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic load average collection loop.
 func (p *LoadAverage) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
+	acc := newAccumulator(p.sendInterval, time.Now)
+
 	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, t time.Time) {
 		p.beat(p.Name())
 		load, err := p.sample()
@@ -44,9 +48,15 @@ func (p *LoadAverage) Run(ctx context.Context, sink exchange.MessageSink, _ *per
 			log.Printf("load-average: %v", err)
 			return
 		}
+		acc.add(bpickle.Tuple{t.Unix(), load})
+
+		points := acc.drainIfDue()
+		if points == nil {
+			return
+		}
 		msg := exchange.Message{
 			"type":          "load-average",
-			"load-averages": []any{bpickle.Tuple{t.Unix(), load}},
+			"load-averages": points,
 		}
 		if err := sink.Send(ctx, msg); err != nil {
 			log.Printf("load-average: send: %v", err)

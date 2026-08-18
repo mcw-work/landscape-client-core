@@ -20,7 +20,8 @@ import (
 type MemoryInfo struct {
 	heartbeatSource
 	procMeminfoPath string
-	interval        time.Duration
+	interval        time.Duration // sampling interval
+	sendInterval    time.Duration // how often buffered points are sent
 }
 
 // NewMemoryInfo returns a MemoryInfo plugin with default settings.
@@ -28,6 +29,7 @@ func NewMemoryInfo() *MemoryInfo {
 	return &MemoryInfo{
 		procMeminfoPath: "/proc/meminfo",
 		interval:        15 * time.Second,
+		sendInterval:    5 * time.Minute,
 	}
 }
 
@@ -38,6 +40,8 @@ func (p *MemoryInfo) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic memory information collection loop.
 func (p *MemoryInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
+	acc := newAccumulator(p.sendInterval, time.Now)
+
 	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, t time.Time) {
 		p.beat(p.Name())
 		freeMemMB, freeSwapMB, err := p.sample()
@@ -45,9 +49,15 @@ func (p *MemoryInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *pers
 			log.Printf("memory-info: %v", err)
 			return
 		}
+		acc.add(bpickle.Tuple{t.Unix(), freeMemMB, freeSwapMB})
+
+		points := acc.drainIfDue()
+		if points == nil {
+			return
+		}
 		msg := exchange.Message{
 			"type":        "memory-info",
-			"memory-info": []any{bpickle.Tuple{t.Unix(), freeMemMB, freeSwapMB}},
+			"memory-info": points,
 		}
 		if err := sink.Send(ctx, msg); err != nil {
 			log.Printf("memory-info: send: %v", err)
