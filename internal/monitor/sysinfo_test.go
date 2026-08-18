@@ -1161,3 +1161,77 @@ func TestUsers_ReadFailureDoesNotDeleteEveryone(t *testing.T) {
 		}
 	}
 }
+
+func TestHardwareInfo_RejectsEmptyOutput(t *testing.T) {
+	p := &HardwareInfo{
+		interval: time.Hour,
+		run: func(_ context.Context) ([]byte, error) {
+			return []byte{}, nil // exit 0, no output: a partial AppArmor denial
+		},
+	}
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-errCh
+
+	if n := len(sink.Messages()); n != 0 {
+		t.Errorf("sent %d hardware-info messages for empty lshw output; the server may overwrite good inventory with nothing", n)
+	}
+}
+
+func TestHardwareInfo_RejectsTruncatedXML(t *testing.T) {
+	p := &HardwareInfo{
+		interval: time.Hour,
+		run: func(_ context.Context) ([]byte, error) {
+			return []byte("<list><node"), nil
+		},
+	}
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-errCh
+
+	if n := len(sink.Messages()); n != 0 {
+		t.Errorf("sent %d hardware-info messages for truncated XML", n)
+	}
+}
+
+func TestHardwareInfo_SendsValidXML(t *testing.T) {
+	const valid = `<list><node id="test"><description>Computer</description></node></list>`
+	p := &HardwareInfo{
+		interval: time.Hour,
+		run: func(_ context.Context) ([]byte, error) {
+			return []byte(valid), nil
+		},
+	}
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+
+	msgs := waitForMessages(t, sink, 1, 500*time.Millisecond)
+	cancel()
+	<-errCh
+
+	if msgs[0]["type"] != "hardware-info" {
+		t.Errorf("type: want hardware-info, got %v", msgs[0]["type"])
+	}
+	if string(msgs[0]["data"].([]byte)) != valid {
+		t.Errorf("data was altered in transit")
+	}
+}
