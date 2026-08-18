@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
@@ -58,14 +58,14 @@ func (p *HardwareInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *pe
 func (p *HardwareInfo) tick(ctx context.Context, sink exchange.MessageSink) {
 	out, err := p.run(ctx)
 	if err != nil {
-		log.Printf("hardware-info: %v", err)
+		slog.Warn("hardware-info: cannot run lshw", "error", err)
 		return
 	}
 	if err := validateLshwXML(out); err != nil {
 		// lshw under strict confinement can be partially AppArmor-denied and
 		// still exit 0. Sending empty or truncated inventory can make the server
 		// overwrite good data with nothing.
-		log.Printf("hardware-info: discarding lshw output: %v", err)
+		slog.Warn("hardware-info: discarding lshw output", "error", err)
 		return
 	}
 	msg := exchange.Message{
@@ -73,7 +73,7 @@ func (p *HardwareInfo) tick(ctx context.Context, sink exchange.MessageSink) {
 		"data": out,
 	}
 	if err := sink.Send(ctx, msg); err != nil {
-		log.Printf("hardware-info: send: %v", err)
+		slog.Warn("hardware-info: send failed", "error", err)
 	}
 }
 

@@ -2,7 +2,7 @@ package monitor
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
@@ -61,7 +61,7 @@ func (p *RebootRequiredPlugin) Run(ctx context.Context, sink exchange.MessageSin
 		flag, err := p.snapd.GetRebootRequired(callCtx)
 		cancel()
 		if err != nil {
-			log.Printf("reboot-required: %v", err)
+			slog.Warn("reboot-required: cannot query snapd", "error", err)
 			return
 		}
 		if prevFlag != nil && *prevFlag == flag {
@@ -71,7 +71,7 @@ func (p *RebootRequiredPlugin) Run(ctx context.Context, sink exchange.MessageSin
 		// only on a successful save so a failure is re-detected next tick.
 		if state != nil {
 			if err := state.SetPluginState(rebootState{Initialized: true, Flag: flag}); err != nil {
-				log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+				slog.Error("reboot-required: cannot save state, will retry next tick", "error", err)
 				return
 			}
 		}
@@ -83,7 +83,7 @@ func (p *RebootRequiredPlugin) Run(ctx context.Context, sink exchange.MessageSin
 			"packages": []any{},
 		}
 		if err := sink.Send(ctx, msg); err != nil {
-			log.Printf("reboot-required: send: %v", err)
+			slog.Warn("reboot-required: send failed", "error", err)
 		}
 	})
 	return nil

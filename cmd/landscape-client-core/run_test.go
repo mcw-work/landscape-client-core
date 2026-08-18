@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -60,4 +65,43 @@ func TestRun_ShutsDownCleanly(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("run did not return within 15s of context cancellation")
 	}
+}
+
+// TestLogLevel_SuppressesBelowThreshold asserts the configured level actually
+// filters output. log.Printf bypasses the slog handler, so log-level did
+// nothing for any package that used it.
+func TestLogLevel_SuppressesBelowThreshold(t *testing.T) {
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	handler := slog.NewTextHandler(&syncWriter{w: &buf, mu: &mu}, &slog.HandlerOptions{Level: slog.LevelError})
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	})
+
+	slog.Info("this must not appear")
+	slog.Debug("nor this")
+	slog.Error("this must appear")
+
+	mu.Lock()
+	out := buf.String()
+	mu.Unlock()
+
+	if strings.Contains(out, "must not appear") || strings.Contains(out, "nor this") {
+		t.Errorf("log-level=error did not suppress lower levels:\n%s", out)
+	}
+	if !strings.Contains(out, "this must appear") {
+		t.Errorf("log-level=error suppressed an error:\n%s", out)
+	}
+}
+
+type syncWriter struct {
+	w  *bytes.Buffer
+	mu *sync.Mutex
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }

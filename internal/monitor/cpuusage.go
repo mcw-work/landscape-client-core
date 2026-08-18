@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -47,7 +47,7 @@ func (p *CPUUsage) Interval() time.Duration { return p.interval }
 func (p *CPUUsage) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	// Prime the baseline before starting the ticker.
 	if _, err := p.sample(); err != nil {
-		log.Printf("cpu-usage: priming baseline: %v", err)
+		slog.Warn("cpu-usage: cannot prime baseline", "error", err)
 	}
 
 	acc := newAccumulator(p.sendInterval, time.Now)
@@ -56,7 +56,7 @@ func (p *CPUUsage) Run(ctx context.Context, sink exchange.MessageSink, _ *persis
 		p.beat(p.Name())
 		usage, err := p.sample()
 		if err != nil {
-			log.Printf("cpu-usage: %v", err)
+			slog.Warn("cpu-usage: cannot sample", "error", err)
 			return
 		}
 		if usage < 0 {
@@ -74,7 +74,7 @@ func (p *CPUUsage) Run(ctx context.Context, sink exchange.MessageSink, _ *persis
 			"cpu-usages": points,
 		}
 		if err := sink.Send(ctx, msg); err != nil {
-			log.Printf("cpu-usage: send: %v", err)
+			slog.Warn("cpu-usage: send failed", "error", err)
 		}
 	})
 	return nil

@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"syscall"
@@ -61,7 +61,7 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 		if err := state.GetPluginState(&saved); err != nil {
 			// Zero state is not equivalent to "no changes yet": for users it
 			// re-sends every account as a create.
-			log.Printf("%s: loading state: %v; treating as first run", p.Name(), err)
+			slog.Warn("mount-info: cannot load state, treating as first run", "error", err)
 		}
 	}
 
@@ -70,7 +70,7 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 		now := time.Now().Unix()
 		mounts, err := p.readMounts()
 		if err != nil {
-			log.Printf("mount-info: %v", err)
+			slog.Warn("mount-info: cannot read mounts", "error", err)
 			return
 		}
 
@@ -82,17 +82,17 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 		for _, m := range mounts {
 			mountPoint, ok := m["mount-point"].(string)
 			if !ok {
-				log.Printf("mount-info: unexpected type for mount-point: %T", m["mount-point"])
+				slog.Warn("mount-info: unexpected type for mount-point", "got", fmt.Sprintf("%T", m["mount-point"]))
 				continue
 			}
 			totalSpace, ok := m["total-space"].(int64)
 			if !ok {
-				log.Printf("mount-info: unexpected type for total-space: %T", m["total-space"])
+				slog.Warn("mount-info: unexpected type for total-space", "got", fmt.Sprintf("%T", m["total-space"]))
 				continue
 			}
 			freeSpace, ok := m["free-space"].(int64)
 			if !ok {
-				log.Printf("mount-info: unexpected type for free-space: %T", m["free-space"])
+				slog.Warn("mount-info: unexpected type for free-space", "got", fmt.Sprintf("%T", m["free-space"]))
 				continue
 			}
 
@@ -112,14 +112,14 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 
 		layoutData, err := json.Marshal(hashEntries)
 		if err != nil {
-			log.Printf("%s: marshal layout: %v; skipping tick", p.Name(), err)
+			slog.Warn("mount-info: cannot marshal layout, skipping tick", "error", err)
 			return
 		}
 		layoutHash := fmt.Sprintf("%x", sha256.Sum256(layoutData))
 
 		freeData, err := json.Marshal(freeSpaceHashEntries)
 		if err != nil {
-			log.Printf("%s: marshal free-space: %v; skipping tick", p.Name(), err)
+			slog.Warn("mount-info: cannot marshal free-space, skipping tick", "error", err)
 			return
 		}
 		freeSpaceHash := fmt.Sprintf("%x", sha256.Sum256(freeData))
@@ -135,7 +135,7 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 			if err := state.SetPluginState(next); err != nil {
 				// Do not advance the in-memory hashes: if the save failed, the
 				// change must be re-detected and re-sent next tick.
-				log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+				slog.Error("mount-info: cannot save state, will retry next tick", "error", err)
 				return
 			}
 		}
@@ -148,7 +148,7 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 				"mount-info": mountInfoEntries,
 			}
 			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("mount-info: send mount-info: %v", err)
+				slog.Warn("mount-info: send mount-info failed", "error", err)
 			}
 		}
 
@@ -160,7 +160,7 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 				"free-space": freeSpaceEntries,
 			}
 			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("mount-info: send free-space: %v", err)
+				slog.Warn("mount-info: send free-space failed", "error", err)
 			}
 		}
 	})
@@ -200,7 +200,7 @@ func (p *MountInfo) readMounts() ([]map[string]any, error) {
 
 		stat, err := p.statvfs(mountPoint)
 		if err != nil {
-			log.Printf("mount-info: stat %s: %v", mountPoint, err)
+			slog.Warn("mount-info: cannot stat mount point", "mount_point", mountPoint, "error", err)
 			continue
 		}
 

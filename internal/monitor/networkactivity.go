@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -47,7 +47,7 @@ func (p *NetworkActivity) Run(ctx context.Context, sink exchange.MessageSink, _ 
 	// Prime baseline.
 	rx, tx, err := p.readDev()
 	if err != nil {
-		log.Printf("network-activity: priming baseline: %v", err)
+		slog.Warn("network-activity: cannot prime baseline", "error", err)
 	} else {
 		p.lastRx, p.lastTx = rx, tx
 	}
@@ -58,7 +58,7 @@ func (p *NetworkActivity) Run(ctx context.Context, sink exchange.MessageSink, _ 
 		p.beat(p.Name())
 		rx, tx, err := p.readDev()
 		if err != nil {
-			log.Printf("network-activity: %v", err)
+			slog.Warn("network-activity: cannot read counters", "error", err)
 			return
 		}
 		activities := p.delta(t.Unix(), rx, tx)
@@ -88,7 +88,7 @@ func (p *NetworkActivity) Run(ctx context.Context, sink exchange.MessageSink, _ 
 			"activities": due,
 		}
 		if err := sink.Send(ctx, msg); err != nil {
-			log.Printf("network-activity: send: %v", err)
+			slog.Warn("network-activity: send failed", "error", err)
 		}
 	})
 	return nil

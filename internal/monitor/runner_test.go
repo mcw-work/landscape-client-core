@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -244,14 +244,9 @@ func TestRunner_LogsPluginRunError(t *testing.T) {
 	var calls int32
 
 	var logs lockedBuffer
-	oldWriter := log.Writer()
-	oldFlags := log.Flags()
-	log.SetOutput(&logs)
-	log.SetFlags(0)
-	defer func() {
-		log.SetOutput(oldWriter)
-		log.SetFlags(oldFlags)
-	}()
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prev)
 
 	plugin := &fakePlugin{
 		name: "erroring",
@@ -276,7 +271,9 @@ func TestRunner_LogsPluginRunError(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(logs.String(), "monitor: plugin erroring failed: context deadline exceeded") {
+		if out := logs.String(); strings.Contains(out, "monitor: plugin failed") &&
+			strings.Contains(out, "plugin=erroring") &&
+			strings.Contains(out, "context deadline exceeded") {
 			cancel()
 			<-runDone
 			return

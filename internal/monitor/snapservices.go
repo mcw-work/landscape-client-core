@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -60,7 +60,7 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 		services, err := p.snapdClient.ListServices(callCtx)
 		cancel()
 		if err != nil {
-			log.Printf("snap-services: listing services: %v", err)
+			slog.Warn("snap-services: cannot list services", "error", err)
 			return
 		}
 		// Sort by name for stable hashing and consistent output.
@@ -75,7 +75,7 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 			if err := state.SetPluginState(snapServicesState{Hash: hash}); err != nil {
 				// Do not advance the in-memory hash: if the save failed, the
 				// change must be re-detected and re-sent next tick.
-				log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+				slog.Error("snap-services: cannot save state, will retry next tick", "error", err)
 				return
 			}
 		}
@@ -96,7 +96,7 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 			},
 		}
 		if err := sink.Send(ctx, msg); err != nil {
-			log.Printf("snap-services: send: %v", err)
+			slog.Warn("snap-services: send failed", "error", err)
 		}
 	})
 	return nil

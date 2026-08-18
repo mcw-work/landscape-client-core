@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -46,7 +46,7 @@ func (p *MemoryInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *pers
 		p.beat(p.Name())
 		freeMemMB, freeSwapMB, err := p.sample()
 		if err != nil {
-			log.Printf("memory-info: %v", err)
+			slog.Warn("memory-info: cannot sample", "error", err)
 			return
 		}
 		acc.add(bpickle.Tuple{t.Unix(), freeMemMB, freeSwapMB})
@@ -60,7 +60,7 @@ func (p *MemoryInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *pers
 			"memory-info": points,
 		}
 		if err := sink.Send(ctx, msg); err != nil {
-			log.Printf("memory-info: send: %v", err)
+			slog.Warn("memory-info: send failed", "error", err)
 		}
 	})
 	return nil

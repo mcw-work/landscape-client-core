@@ -3,7 +3,7 @@ package monitor
 import (
 	"bufio"
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -58,7 +58,7 @@ func (p *ComputerInfo) Run(ctx context.Context, sink exchange.MessageSink, state
 	var prev ciSavedState
 	if state != nil {
 		if err := state.GetPluginState(&prev); err != nil {
-			log.Printf("computer-info: loading state: %v", err)
+			slog.Warn("computer-info: cannot load state", "error", err)
 		}
 	}
 
@@ -80,7 +80,7 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 	if hostnameErr != nil {
 		// Omit the field rather than sending "", which the server reads as
 		// "this device has no hostname".
-		log.Printf("computer-info: reading hostname: %v", hostnameErr)
+		slog.Warn("computer-info: cannot read hostname", "error", hostnameErr)
 	}
 	totalMemMB, totalSwapMB := p.readMeminfo()
 	machineID := p.readMachineID()
@@ -103,7 +103,7 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 	if len(compMsg) > 0 {
 		compMsg["type"] = "computer-info"
 		if err := sink.Send(ctx, compMsg); err != nil {
-			log.Printf("computer-info: send: %v", err)
+			slog.Warn("computer-info: send failed", "error", err)
 		}
 	}
 
@@ -123,7 +123,7 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 	if len(distMsg) > 0 {
 		distMsg["type"] = "distribution-info"
 		if err := sink.Send(ctx, distMsg); err != nil {
-			log.Printf("computer-info: send distribution-info: %v", err)
+			slog.Warn("computer-info: send distribution-info failed", "error", err)
 		}
 	}
 
@@ -142,7 +142,7 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 	if len(snapMsg) > 0 && serial != "" {
 		snapMsg["type"] = "snap-info"
 		if err := sink.Send(ctx, snapMsg); err != nil {
-			log.Printf("computer-info: send snap-info: %v", err)
+			slog.Warn("computer-info: send snap-info failed", "error", err)
 		}
 	}
 
@@ -170,7 +170,7 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 	*prev = next
 	if state != nil {
 		if err := state.SetPluginState(next); err != nil {
-			log.Printf("computer-info: saving state: %v", err)
+			slog.Error("computer-info: cannot save state", "error", err)
 		}
 	}
 }
@@ -178,7 +178,7 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 func (p *ComputerInfo) readMeminfo() (totalMemMB, totalSwapMB int64) {
 	f, err := os.Open(p.meminfoPath)
 	if err != nil {
-		log.Printf("computer-info: opening %s: %v", p.meminfoPath, err)
+		slog.Warn("computer-info: cannot open meminfo", "path", p.meminfoPath, "error", err)
 		return
 	}
 	defer func() {
@@ -208,7 +208,7 @@ func (p *ComputerInfo) readMeminfo() (totalMemMB, totalSwapMB int64) {
 func (p *ComputerInfo) readMachineID() string {
 	data, err := os.ReadFile(p.machineIDPath)
 	if err != nil {
-		log.Printf("computer-info: reading machine-id: %v", err)
+		slog.Warn("computer-info: cannot read machine-id", "error", err)
 		return ""
 	}
 	return strings.TrimSpace(string(data))
@@ -217,7 +217,7 @@ func (p *ComputerInfo) readMachineID() string {
 func (p *ComputerInfo) readOSRelease() (distributorID, description, release, codeName string) {
 	f, err := os.Open(p.osReleasePath)
 	if err != nil {
-		log.Printf("computer-info: opening %s: %v", p.osReleasePath, err)
+		slog.Warn("computer-info: cannot open os-release", "path", p.osReleasePath, "error", err)
 		return
 	}
 	defer func() {
@@ -255,7 +255,7 @@ func (p *ComputerInfo) readSnapAssertions(ctx context.Context) (serial, model, b
 	assertions, err := p.snapdClient.GetAssertions(callCtx)
 	cancel()
 	if err != nil {
-		log.Printf("computer-info: getting snap assertions: %v", err)
+		slog.Warn("computer-info: cannot get snap assertions", "error", err)
 		return
 	}
 	if assertions == nil {

@@ -3,7 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -45,7 +45,7 @@ func (p *LoadAverage) Run(ctx context.Context, sink exchange.MessageSink, _ *per
 		p.beat(p.Name())
 		load, err := p.sample()
 		if err != nil {
-			log.Printf("load-average: %v", err)
+			slog.Warn("load-average: cannot sample", "error", err)
 			return
 		}
 		acc.add(bpickle.Tuple{t.Unix(), load})
@@ -59,7 +59,7 @@ func (p *LoadAverage) Run(ctx context.Context, sink exchange.MessageSink, _ *per
 			"load-averages": points,
 		}
 		if err := sink.Send(ctx, msg); err != nil {
-			log.Printf("load-average: send: %v", err)
+			slog.Warn("load-average: send failed", "error", err)
 		}
 	})
 	return nil

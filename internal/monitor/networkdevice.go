@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -49,7 +49,7 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 		if err := state.GetPluginState(&saved); err != nil {
 			// Zero state is not equivalent to "no changes yet": for users it
 			// re-sends every account as a create.
-			log.Printf("%s: loading state: %v; treating as first run", p.Name(), err)
+			slog.Warn("network-device: cannot load state, treating as first run", "error", err)
 		}
 	}
 
@@ -57,13 +57,13 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 		p.beat(p.Name())
 		devices, speeds, err := p.collect()
 		if err != nil {
-			log.Printf("network-device: %v", err)
+			slog.Warn("network-device: cannot collect", "error", err)
 			return
 		}
 		combined := []any{devices, speeds}
 		data, err := json.Marshal(combined)
 		if err != nil {
-			log.Printf("network-device: marshal: %v", err)
+			slog.Warn("network-device: cannot marshal", "error", err)
 			return
 		}
 		hash := fmt.Sprintf("%x", sha256.Sum256(data))
@@ -74,7 +74,7 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 			if err := state.SetPluginState(networkDeviceState{Hash: hash}); err != nil {
 				// Do not advance the in-memory hash: if the save failed, the
 				// change must be re-detected and re-sent next tick.
-				log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+				slog.Error("network-device: cannot save state, will retry next tick", "error", err)
 				return
 			}
 		}
@@ -85,7 +85,7 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 			"device-speeds": speeds,
 		}
 		if err := sink.Send(ctx, msg); err != nil {
-			log.Printf("network-device: send: %v", err)
+			slog.Warn("network-device: send failed", "error", err)
 		}
 	})
 	return nil
@@ -126,7 +126,7 @@ func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 
 		addrs, err := p.getAddrs(iface)
 		if err != nil {
-			log.Printf("network-device: getting addrs for %s: %v", name, err)
+			slog.Warn("network-device: cannot get addrs", "interface", name, "error", err)
 		} else {
 			for _, addr := range addrs {
 				ipNet, ok := addr.(*net.IPNet)

@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -65,14 +65,14 @@ func (p *ActiveProcessInfo) Run(ctx context.Context, sink exchange.MessageSink, 
 		p.beat(p.Name())
 		msg, err := p.buildMessage()
 		if err != nil {
-			log.Printf("active-process-info: %v", err)
+			slog.Warn("active-process-info: cannot build message", "error", err)
 			return
 		}
 		if msg == nil {
 			return
 		}
 		if err := sink.Send(ctx, msg); err != nil {
-			log.Printf("active-process-info: send: %v", err)
+			slog.Warn("active-process-info: send failed", "error", err)
 		}
 	})
 	return nil
@@ -336,7 +336,7 @@ func (p *ActiveProcessInfo) readStatusInto(pid int64, info *processInfo) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		log.Printf("active-process-info: scanning status for pid %d: %v", pid, err)
+		slog.Warn("active-process-info: cannot scan status", "pid", pid, "error", err)
 	}
 }
 

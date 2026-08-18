@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -87,7 +87,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		})
 	}
 	if err := eg.Wait(); err != nil && !errors.Is(err, context.Canceled) {
-		log.Printf("monitor: runner group error: %v", err)
+		slog.Error("monitor: runner group error", "error", err)
 	}
 
 	mu.Lock()
@@ -117,12 +117,12 @@ func (r *Runner) runPlugin(ctx context.Context, plugin Plugin) error {
 			defer func() {
 				if rec := recover(); rec != nil {
 					runErr = fmt.Errorf("panic: %v", rec)
-					log.Printf("monitor: plugin %s panicked: %v\n%s", plugin.Name(), rec, debug.Stack())
+					slog.Error("monitor: plugin panicked", "plugin", plugin.Name(), "panic", rec, "stack", string(debug.Stack()))
 				}
 			}()
 			state, err := r.store.Load()
 			if err != nil {
-				log.Printf("monitor: plugin %s: loading state: %v; using empty state", plugin.Name(), err)
+				slog.Warn("monitor: cannot load plugin state, using empty state", "plugin", plugin.Name(), "error", err)
 				state = &persist.State{PluginState: make(map[string]json.RawMessage)}
 			}
 			accessor := r.store.Accessor(plugin.Name(), state)
@@ -142,7 +142,7 @@ func (r *Runner) runPlugin(ctx context.Context, plugin Plugin) error {
 		}
 
 		if runErr != nil && !errors.Is(runErr, context.Canceled) {
-			log.Printf("monitor: plugin %s failed: %v", plugin.Name(), runErr)
+			slog.Error("monitor: plugin failed", "plugin", plugin.Name(), "error", runErr)
 		}
 
 		if time.Since(started) >= runnerHealthyRunWindow {
@@ -150,7 +150,7 @@ func (r *Runner) runPlugin(ctx context.Context, plugin Plugin) error {
 		}
 
 		// Exponential backoff before restart.
-		log.Printf("monitor: plugin %s restarting in %v", plugin.Name(), backoff)
+		slog.Warn("monitor: plugin restarting", "plugin", plugin.Name(), "backoff", backoff)
 		select {
 		case <-ctx.Done():
 			return lastErr

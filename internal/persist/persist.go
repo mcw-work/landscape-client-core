@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -53,7 +53,7 @@ func (s *Store) Load() (*State, error) {
 		if berr == nil {
 			var recovered State
 			if jerr := json.Unmarshal(backup, &recovered); jerr == nil {
-				log.Printf("persist: %s is corrupt (%v); recovered from %s.old", s.path, err, s.path)
+				slog.Warn("persist: state file is corrupt, recovered from backup", "path", s.path, "error", err, "backup", s.path+".old")
 				if recovered.PluginState == nil {
 					recovered.PluginState = make(map[string]json.RawMessage)
 				}
@@ -132,7 +132,7 @@ func (s *Store) saveLocked(state *State) error {
 	// truncated write or disk corruption is recoverable rather than fatal.
 	if existing, err := os.ReadFile(s.path); err == nil {
 		if err := os.WriteFile(s.path+".old", existing, 0600); err != nil {
-			log.Printf("persist: writing backup: %v", err)
+			slog.Warn("persist: cannot write backup", "error", err)
 		}
 	}
 

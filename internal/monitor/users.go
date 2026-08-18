@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"sort"
 	"strconv"
@@ -62,7 +62,7 @@ func (p *UserMonitor) Run(ctx context.Context, sink exchange.MessageSink, state 
 		if err := state.GetPluginState(&saved); err != nil {
 			// Zero state is not equivalent to "no changes yet": for users it
 			// re-sends every account as a create.
-			log.Printf("%s: loading state: %v; treating as first run", p.Name(), err)
+			slog.Warn("users: cannot load state, treating as first run", "error", err)
 		}
 	}
 	if saved.Users == nil {
@@ -79,26 +79,26 @@ func (p *UserMonitor) Run(ctx context.Context, sink exchange.MessageSink, state 
 			// An unreadable source file means "unknown", never "empty":
 			// diffing against an empty map tells the server to delete every
 			// user, and persisting it re-creates them all on the next tick.
-			log.Printf("users: parsing passwd: %v; skipping tick", err)
+			slog.Warn("users: cannot parse passwd, skipping tick", "error", err)
 			return
 		}
 		newGroups, err := p.parseGroup(newUsers)
 		if err != nil {
-			log.Printf("users: parsing group: %v; skipping tick", err)
+			slog.Warn("users: cannot parse group, skipping tick", "error", err)
 			return
 		}
 		msg := buildUsersDiff(saved.Users, newUsers, saved.Groups, newGroups)
 		if msg != nil {
 			msg["type"] = "users"
 			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("users: send: %v", err)
+				slog.Warn("users: send failed", "error", err)
 			}
 		}
 		saved.Users = newUsers
 		saved.Groups = newGroups
 		if state != nil {
 			if err := state.SetPluginState(saved); err != nil {
-				log.Printf("users: saving state: %v", err)
+				slog.Error("users: cannot save state", "error", err)
 			}
 		}
 	})

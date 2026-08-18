@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -255,8 +255,9 @@ func TestScriptExecHandler_OutputTruncated(t *testing.T) {
 
 func TestScriptExecHandler_UsernameWarning(t *testing.T) {
 	var logBuf bytes.Buffer
-	log.SetOutput(&logBuf)
-	defer log.SetOutput(os.Stderr)
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prev)
 
 	sink := &mockResultSink{}
 	h := manager.NewScriptExecHandler(t.TempDir(), nil)
