@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"log"
 	"runtime/debug"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
@@ -39,15 +42,20 @@ func New(plugins []Plugin, sink exchange.MessageSink, store *persist.Store) *Run
 }
 
 // Run starts one goroutine per plugin and blocks until all goroutines have
-// exited. It always returns nil.
+// exited. It returns nil on clean shutdown, and an error naming the plugins that
+// failed repeatedly — the supervisor needs to distinguish those two cases.
 func (r *Runner) Run(ctx context.Context) error {
 	eg, egCtx := errgroup.WithContext(ctx)
+	var mu sync.Mutex
+	failed := make(map[string]error)
+
 	for _, p := range r.plugins {
 		plugin := p
 		eg.Go(func() error {
-			r.runPlugin(egCtx, plugin)
-			if err := egCtx.Err(); err != nil {
-				return fmt.Errorf("plugin %s stopped: %w", plugin.Name(), err)
+			if err := r.runPlugin(egCtx, plugin); err != nil {
+				mu.Lock()
+				failed[plugin.Name()] = err
+				mu.Unlock()
 			}
 			return nil
 		})
@@ -55,13 +63,27 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err := eg.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("monitor: runner group error: %v", err)
 	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(failed) > 0 {
+		names := make([]string, 0, len(failed))
+		for name := range failed {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return fmt.Errorf("monitor: plugins failed: %s (last error for %s: %w)",
+			strings.Join(names, ", "), names[0], failed[names[0]])
+	}
 	return nil
 }
 
 // runPlugin runs a single plugin in a loop, recovering from panics and applying
-// exponential backoff before each restart. It returns when ctx is cancelled.
-func (r *Runner) runPlugin(ctx context.Context, plugin Plugin) {
+// exponential backoff before each restart. It returns the last non-cancellation
+// error observed when ctx is cancelled, or nil on clean shutdown.
+func (r *Runner) runPlugin(ctx context.Context, plugin Plugin) error {
 	backoff := runnerInitialBackoff
+	var lastErr error
 	for {
 		started := time.Now()
 		var runErr error
@@ -81,9 +103,13 @@ func (r *Runner) runPlugin(ctx context.Context, plugin Plugin) {
 			runErr = plugin.Run(ctx, r.sink, accessor)
 		}()
 
+		if runErr != nil && !errors.Is(runErr, context.Canceled) {
+			lastErr = runErr
+		}
+
 		// Don't restart if context was cancelled.
 		if ctx.Err() != nil {
-			return
+			return lastErr
 		}
 
 		if runErr != nil && !errors.Is(runErr, context.Canceled) {
@@ -98,7 +124,7 @@ func (r *Runner) runPlugin(ctx context.Context, plugin Plugin) {
 		log.Printf("monitor: plugin %s restarting in %v", plugin.Name(), backoff)
 		select {
 		case <-ctx.Done():
-			return
+			return lastErr
 		case <-time.After(backoff):
 		}
 		backoff *= 2

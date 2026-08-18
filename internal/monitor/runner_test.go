@@ -3,7 +3,9 @@ package monitor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -398,5 +400,67 @@ func TestRunner_ErrgroupContextCancellationPropagatesToAllPlugins(t *testing.T) 
 
 	if got := atomic.LoadInt32(&exits); got != 3 {
 		t.Fatalf("expected all plugins to observe cancellation, got %d", got)
+	}
+}
+
+// failingPlugin returns immediately with an error and never blocks, so the
+// runner's restart backoff drives it repeatedly.
+type failingPlugin struct{ name string }
+
+func (p *failingPlugin) Name() string { return p.name }
+
+func (p *failingPlugin) Run(ctx context.Context, _ exchange.MessageSink, _ *persist.PluginStateAccessor) error {
+	return errors.New("boom")
+}
+
+// blockingPlugin blocks until the context is cancelled.
+type blockingPlugin struct{}
+
+func (p *blockingPlugin) Name() string { return "blocking-plugin" }
+
+func (p *blockingPlugin) Run(ctx context.Context, _ exchange.MessageSink, _ *persist.PluginStateAccessor) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestRunner_Run_ReportsCollapse asserts Run surfaces a plugin failure instead
+// of swallowing it. The supervisor cannot act on a function documented to
+// always return nil.
+func TestRunner_Run_ReportsCollapse(t *testing.T) {
+	store := persist.New(filepath.Join(t.TempDir(), "state.json"))
+	r := New([]Plugin{&failingPlugin{name: "boom-plugin"}}, &mockSink{}, store)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := r.Run(ctx)
+	if err == nil {
+		t.Fatal("Run returned nil for a plugin that only ever fails")
+	}
+	if !strings.Contains(err.Error(), "boom-plugin") {
+		t.Errorf("error should name the failing plugin, got: %v", err)
+	}
+}
+
+// TestRunner_Run_CleanShutdownReturnsNil guards the behaviour that must NOT
+// change: cancellation is not a failure.
+func TestRunner_Run_CleanShutdownReturnsNil(t *testing.T) {
+	store := persist.New(filepath.Join(t.TempDir(), "state.json"))
+	r := New([]Plugin{&blockingPlugin{}}, &mockSink{}, store)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx) }()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("clean shutdown must return nil, got: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after cancellation")
 	}
 }
