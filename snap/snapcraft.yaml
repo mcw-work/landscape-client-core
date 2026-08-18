@@ -69,6 +69,5 @@ parts:
       - go/1.25/stable
     stage-packages:
       - lshw
-      - curl
     override-build: |
       go build -ldflags="-s -w" -trimpath -o "$CRAFT_PART_INSTALL/bin/" ./cmd/landscape-client-core/ ./cmd/landscape-client-core-config/
