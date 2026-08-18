@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -397,7 +398,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			"access_group":          e.cfg.AccessGroup,
 		}
 		e.mu.Lock()
-		e.pending = append([]Message{regMsg}, e.pending...)
+		e.pending = slices.Insert(e.pending, 0, regMsg)
 		e.mu.Unlock()
 		log.Printf("exchange: sending registration request (account=%q title=%q key-set=%v)",
 			e.cfg.AccountName, e.cfg.ComputerTitle, e.cfg.RegistrationKey != "")
@@ -511,7 +512,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	if err != nil {
 		// Re-queue the snapshot so messages are not lost on transport failure.
 		e.mu.Lock()
-		e.pending = append(snapshot, e.pending...)
+		e.pending = slices.Insert(e.pending, 0, snapshot...)
 		e.mu.Unlock()
 		return fmt.Errorf("exchange: posting to server: %w", err)
 	}
@@ -555,7 +556,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		}
 		if nAcked < len(snapshot) {
 			e.mu.Lock()
-			e.pending = append(snapshot[nAcked:], e.pending...)
+			e.pending = slices.Insert(e.pending, 0, snapshot[nAcked:]...)
 			e.mu.Unlock()
 			log.Printf("exchange: server ACK'd %d/%d messages (our seq=%d, server wants=%d); re-queuing %d",
 				nAcked, len(snapshot), state.OutboundSequence, serverACK, len(snapshot)-nAcked)
@@ -642,7 +643,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 				resyncAck["operation-id"] = opid
 			}
 			e.mu.Lock()
-			e.pending = append([]Message{resyncAck}, e.pending...)
+			e.pending = slices.Insert(e.pending, 0, resyncAck)
 			e.mu.Unlock()
 			log.Printf("exchange: received resynchronize from server, queuing ack")
 		case "unknown-id":
