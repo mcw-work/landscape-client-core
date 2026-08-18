@@ -385,3 +385,62 @@ func TestUpdatePreservesConcurrentPluginAndExchangeState(t *testing.T) {
 		t.Fatalf("plugin count: got %d, want 3", pluginState["count"])
 	}
 }
+
+// TestSetPluginState_DoesNotRollBackOtherFields asserts a failed plugin-state
+// save never resurrects a stale whole-State snapshot. The fallback path wrote
+// p.cached, captured when the plugin started, clobbering SecureID and
+// OutboundSequence written by the exchange since.
+func TestSetPluginState_DoesNotRollBackOtherFields(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	store := persist.New(path)
+
+	// Plugin starts and captures a snapshot.
+	initial, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	initial.SecureID = "SECRET-1"
+	initial.OutboundSequence = 5
+	if err := store.Save(initial); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	accessor := store.Accessor("plugin-a", initial)
+
+	// The exchange rotates the secure ID and advances the sequence.
+	if err := store.Update(func(s *persist.State) error {
+		s.SecureID = "SECRET-2-ROTATED"
+		s.OutboundSequence = 99
+		return nil
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Corrupt the file so the next Update fails at decode.
+	if err := os.WriteFile(path, []byte("{not json"), 0600); err != nil {
+		t.Fatalf("corrupt: %v", err)
+	}
+
+	err = accessor.SetPluginState(map[string]string{"hash": "abc"})
+	if err == nil {
+		t.Fatal("SetPluginState returned nil for a state file that cannot be read")
+	}
+
+	// Repair the file by writing known-good content, then confirm the failed
+	// save did not overwrite it with the stale snapshot.
+	if err := os.WriteFile(path, []byte(`{"secure_id":"SECRET-2-ROTATED","outbound_sequence":99}`), 0600); err != nil {
+		t.Fatalf("repair: %v", err)
+	}
+	got, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load after repair: %v", err)
+	}
+	if got.SecureID != "SECRET-2-ROTATED" {
+		t.Errorf("SecureID rolled back to %q", got.SecureID)
+	}
+	if got.OutboundSequence != 99 {
+		t.Errorf("OutboundSequence rolled back to %d", got.OutboundSequence)
+	}
+}

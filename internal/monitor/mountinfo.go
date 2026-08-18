@@ -110,10 +110,15 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 			layoutData, _ := json.Marshal(hashEntries)
 			hash := fmt.Sprintf("%x", sha256.Sum256(layoutData))
 			if hash != saved.Hash {
-				saved.Hash = hash
 				if state != nil {
-					_ = state.SetPluginState(saved)
+					if err := state.SetPluginState(mountInfoState{Hash: hash}); err != nil {
+						// Do not advance the in-memory hash: if the save failed, the
+						// change must be re-detected and re-sent next tick.
+						log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+						continue
+					}
 				}
+				saved.Hash = hash
 				if mountInfoEntries != nil {
 					msg := exchange.Message{
 						"type":       "mount-info",

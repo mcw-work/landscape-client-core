@@ -197,15 +197,10 @@ func (p *PluginStateAccessor) SetPluginState(v any) error {
 		return nil
 	})
 	if err != nil {
-		// Fall back to whatever we have cached rather than failing entirely.
-		if err2 := p.ensureLoaded(); err2 != nil {
-			return fmt.Errorf("persist: saving plugin state for %q: update failed: %w", p.key, err)
-		}
-		if p.cached.PluginState == nil {
-			p.cached.PluginState = make(map[string]json.RawMessage)
-		}
-		p.cached.PluginState[p.key] = json.RawMessage(data)
-		return p.store.Save(p.cached)
+		// Never "recover" a failed save by writing older data: p.cached is a
+		// whole-State snapshot from plugin start, so writing it rolls back
+		// SecureID and OutboundSequence written by the exchange since.
+		return fmt.Errorf("persist: saving plugin state for %q: %w", p.key, err)
 	}
 	p.cached = updated
 	return nil

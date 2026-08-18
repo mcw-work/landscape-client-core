@@ -77,10 +77,15 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 			if hash == prevHash {
 				continue // no change, skip
 			}
-			prevHash = hash
 			if state != nil {
-				_ = state.SetPluginState(snapServicesState{Hash: hash})
+				if err := state.SetPluginState(snapServicesState{Hash: hash}); err != nil {
+					// Do not advance the in-memory hash: if the save failed, the
+					// change must be re-detected and re-sent next tick.
+					log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+					continue
+				}
 			}
+			prevHash = hash
 			running := make([]any, 0, len(services))
 			for _, svc := range services {
 				running = append(running, map[string]any{

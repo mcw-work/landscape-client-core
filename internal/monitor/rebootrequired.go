@@ -71,12 +71,16 @@ func (p *RebootRequiredPlugin) Run(ctx context.Context, sink exchange.MessageSin
 			if prevFlag != nil && *prevFlag == flag {
 				continue // no change, skip
 			}
-			// Value changed (or first sample): update tracker and persist.
+			// Value changed (or first sample): persist, then update the tracker
+			// only on a successful save so a failure is re-detected next tick.
+			if state != nil {
+				if err := state.SetPluginState(rebootState{Initialized: true, Flag: flag}); err != nil {
+					log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+					continue
+				}
+			}
 			f := flag
 			prevFlag = &f
-			if state != nil {
-				_ = state.SetPluginState(rebootState{Initialized: true, Flag: flag})
-			}
 			msg := exchange.Message{
 				"type":     "reboot-required-info",
 				"flag":     flag,
