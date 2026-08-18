@@ -125,6 +125,33 @@ func (p *NetworkActivity) readDev() (rx, tx map[string]int64, err error) {
 	return rx, tx, scanner.Err()
 }
 
+// counterWrapThreshold is how close to 2^32 the previous value must be for a
+// negative delta to be treated as a wrap rather than a counter reset. A
+// re-created interface starts near zero, so its previous value is nowhere near
+// the threshold.
+const (
+	counterWrap          = int64(1) << 32
+	counterWrapThreshold = counterWrap - (1 << 24) // within 16 MiB of the wrap point
+)
+
+// counterDelta returns the traffic between two samples of a kernel byte counter.
+//
+// On 32-bit systems (armhf Core devices) the counter wraps at 2^32, so a
+// negative raw delta following a near-maximum previous value is a wrap and the
+// wrapped amount must be added back — clamping it loses 4 GiB per interface per
+// wrap. A negative delta from a low previous value is a genuine reset (interface
+// re-created) and still clamps to zero. 64-bit counters do not wrap.
+func counterDelta(now, prev int64) int64 {
+	d := now - prev
+	if d >= 0 {
+		return d
+	}
+	if prev >= counterWrapThreshold {
+		return d + counterWrap
+	}
+	return 0
+}
+
 // delta computes per-interface deltas since the last sample. Returns a map of
 // interface name (as bytes) → []any{[]any{timestamp, rxDelta, txDelta}} matching the
 // Python network-activity message format.
@@ -137,15 +164,8 @@ func (p *NetworkActivity) delta(ts int64, rx, tx map[string]int64) bpickle.Bytes
 		if !hadRx || !hadTx {
 			continue
 		}
-		rxDelta := rxNow - lastRx
-		txDelta := txNow - lastTx
-		// Clamp rollover or counter resets to zero.
-		if rxDelta < 0 {
-			rxDelta = 0
-		}
-		if txDelta < 0 {
-			txDelta = 0
-		}
+		rxDelta := counterDelta(rxNow, lastRx)
+		txDelta := counterDelta(txNow, lastTx)
 		if rxDelta == 0 && txDelta == 0 {
 			continue
 		}
