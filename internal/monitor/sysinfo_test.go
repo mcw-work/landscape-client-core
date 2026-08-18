@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -1233,5 +1234,98 @@ func TestHardwareInfo_SendsValidXML(t *testing.T) {
 	}
 	if string(msgs[0]["data"].([]byte)) != valid {
 		t.Errorf("data was altered in transit")
+	}
+}
+
+// ─── diffProcesses tests ───────────────────────────────────────────────────
+
+// TestDiffProcesses_IgnoresCPUJitter asserts a process whose only change is its
+// CPU percentage is not reported as updated. Comparing whole structs made the
+// diff degenerate: any process doing work counted as changed.
+func TestDiffProcesses_IgnoresCPUJitter(t *testing.T) {
+	old := map[int64]processInfo{
+		1: {pid: 1, name: "init", state: "S", percentCPU: 0.1},
+		2: {pid: 2, name: "worker", state: "R", percentCPU: 3.4},
+	}
+	updated := map[int64]processInfo{
+		1: {pid: 1, name: "init", state: "S", percentCPU: 0.2},
+		2: {pid: 2, name: "worker", state: "R", percentCPU: 7.9},
+	}
+
+	creates, updates, deletes := diffProcesses(old, updated)
+
+	if len(creates) != 0 || len(deletes) != 0 {
+		t.Errorf("want no creates or deletes, got %d/%d", len(creates), len(deletes))
+	}
+	if len(updates) != 0 {
+		t.Errorf("CPU-only changes should not be reported as updates, got %d", len(updates))
+	}
+}
+
+// TestDiffProcesses_ReportsRealChanges guards against over-correcting: a state
+// change and a new process must still surface.
+func TestDiffProcesses_ReportsRealChanges(t *testing.T) {
+	old := map[int64]processInfo{
+		1: {pid: 1, name: "init", state: "S", percentCPU: 0.1},
+	}
+	updated := map[int64]processInfo{
+		1: {pid: 1, name: "init", state: "Z", percentCPU: 0.1},
+		2: {pid: 2, name: "new", state: "R"},
+	}
+
+	creates, updates, deletes := diffProcesses(old, updated)
+
+	if len(creates) != 1 {
+		t.Errorf("want 1 created process, got %d", len(creates))
+	}
+	if len(updates) != 1 {
+		t.Errorf("a state change S->Z must be reported, got %d updates", len(updates))
+	}
+	if len(deletes) != 0 {
+		t.Errorf("want no deletes, got %d", len(deletes))
+	}
+}
+
+// TestProcStat_FitsInReadBuffer asserts every /proc/<pid>/stat line on this host
+// is well under the 4 KiB reuse buffer, so the single short read in
+// readProcessInfo never truncates a stat line.
+func TestProcStat_FitsInReadBuffer(t *testing.T) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		t.Skipf("cannot read /proc: %v", err)
+	}
+	const bufSize = 4096
+	checked := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, err := strconv.ParseInt(e.Name(), 10, 64); err != nil {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
+		if err != nil {
+			continue // process exited between listing and reading
+		}
+		if len(data) >= bufSize {
+			t.Errorf("pid %s stat is %d bytes, not under %d", e.Name(), len(data), bufSize)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Skip("no readable /proc/<pid>/stat entries")
+	}
+}
+
+// BenchmarkActiveProcessInfo_Collect measures per-tick allocation of the full
+// read-and-diff path against the live /proc.
+func BenchmarkActiveProcessInfo_Collect(b *testing.B) {
+	p := NewActiveProcessInfo()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := p.buildMessage(); err != nil {
+			b.Fatalf("buildMessage: %v", err)
+		}
 	}
 }
