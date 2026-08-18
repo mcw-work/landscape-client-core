@@ -54,58 +54,52 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 		}
 	}
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.beat(p.Name())
-			callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
-			services, err := p.snapdClient.ListServices(callCtx)
-			cancel()
-			if err != nil {
-				log.Printf("snap-services: listing services: %v", err)
-				continue
-			}
-			// Sort by name for stable hashing and consistent output.
-			sort.Slice(services, func(i, j int) bool {
-				return services[i].Name < services[j].Name
-			})
-			hash := hashSnapServices(services)
-			if hash == prevHash {
-				continue // no change, skip
-			}
-			if state != nil {
-				if err := state.SetPluginState(snapServicesState{Hash: hash}); err != nil {
-					// Do not advance the in-memory hash: if the save failed, the
-					// change must be re-detected and re-sent next tick.
-					log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
-					continue
-				}
-			}
-			prevHash = hash
-			running := make([]any, 0, len(services))
-			for _, svc := range services {
-				running = append(running, map[string]any{
-					"name":    svc.Name,
-					"snap":    svc.Snap,
-					"enabled": svc.Enabled,
-					"active":  svc.Active,
-				})
-			}
-			msg := exchange.Message{
-				"type": "snap-services",
-				"services": map[string]any{
-					"running": running,
-				},
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("snap-services: send: %v", err)
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+		services, err := p.snapdClient.ListServices(callCtx)
+		cancel()
+		if err != nil {
+			log.Printf("snap-services: listing services: %v", err)
+			return
+		}
+		// Sort by name for stable hashing and consistent output.
+		sort.Slice(services, func(i, j int) bool {
+			return services[i].Name < services[j].Name
+		})
+		hash := hashSnapServices(services)
+		if hash == prevHash {
+			return // no change, skip
+		}
+		if state != nil {
+			if err := state.SetPluginState(snapServicesState{Hash: hash}); err != nil {
+				// Do not advance the in-memory hash: if the save failed, the
+				// change must be re-detected and re-sent next tick.
+				log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+				return
 			}
 		}
-	}
+		prevHash = hash
+		running := make([]any, 0, len(services))
+		for _, svc := range services {
+			running = append(running, map[string]any{
+				"name":    svc.Name,
+				"snap":    svc.Snap,
+				"enabled": svc.Enabled,
+				"active":  svc.Active,
+			})
+		}
+		msg := exchange.Message{
+			"type": "snap-services",
+			"services": map[string]any{
+				"running": running,
+			},
+		}
+		if err := sink.Send(ctx, msg); err != nil {
+			log.Printf("snap-services: send: %v", err)
+		}
+	})
+	return nil
 }
 
 // hashSnapServices returns a hex SHA-256 digest of the JSON-encoded services

@@ -512,7 +512,7 @@ func TestContextCancellation(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------
-// Test 10: Urgent interval — non-empty pending after exchange → shorter tick
+// Test 10: Urgent interval — urgent pending after exchange → shorter tick
 // -----------------------------------------------------------------------
 
 func TestUrgentInterval(t *testing.T) {
@@ -520,28 +520,34 @@ func TestUrgentInterval(t *testing.T) {
 	ts.cfg.ExchangeInterval = 500 * time.Millisecond      // long normal interval
 	ts.cfg.UrgentExchangeInterval = 10 * time.Millisecond // very short urgent
 
-	// Register a handler that re-queues a message, leaving pending non-empty
-	// after performExchange returns (WaitGroup ensures this happens in time).
-	ts.ex.Subscribe("trigger-urgent", func(ctx context.Context, msg Message) {
-		_ = ts.ex.Send(ctx, Message{"type": "response-msg"})
-	})
+	// Pre-register so Run does not inject a register message (which would force
+	// the urgent interval regardless of pending) — this isolates the
+	// urgent-pending path.
+	st, _ := ts.store.Load()
+	st.SecureID = "sec123"
+	if err := ts.store.Save(st); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 
-	// First exchange response includes a trigger message.
-	ts.fs.push(map[string]any{
-		"messages": []any{
-			map[string]any{"type": "trigger-urgent"},
-		},
-		"next-expected-sequence": int64(0),
-	})
+	// Seed an urgent (operation-result) message. The server ACKs nothing
+	// (next-expected-sequence stays 0), so performExchange re-queues it and it
+	// remains pending after each exchange, keeping hasUrgentPendingLocked true.
+	_ = ts.ex.Send(context.Background(), Message{"type": "operation-result", "operation-id": int64(1)})
+	for i := 0; i < 5; i++ {
+		ts.fs.push(map[string]any{
+			"messages":               []any{},
+			"next-expected-sequence": int64(0),
+		})
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go ts.ex.Run(ctx) //nolint:errcheck
 
-	// Wait for the second exchange to happen. With UrgentExchangeInterval=10ms
-	// it should arrive well within 150ms. With ExchangeInterval=500ms it would
-	// not arrive within that window.
+	// With an urgent message pending and UrgentExchangeInterval=10ms the second
+	// exchange arrives well within 150ms. With ExchangeInterval=500ms (used when
+	// only non-urgent messages are pending) it would not.
 	deadline := time.Now().Add(150 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		if ts.fs.count() >= 2 {
@@ -762,5 +768,253 @@ func TestPerformExchange_HandlerDispatchDoesNotFailExchange(t *testing.T) {
 	case <-ran:
 	case <-time.After(time.Second):
 		t.Fatal("handler was never dispatched")
+	}
+}
+
+// TestSend_DoesNotForceAnExchange asserts plugin telemetry queues for the next
+// scheduled exchange instead of triggering one per message. Measured before this
+// fix: 24 sends produced 24 exchanges with a 1-hour interval configured.
+func TestSend_DoesNotForceAnExchange(t *testing.T) {
+	srv := &fakeServer{}
+	for i := 0; i < 10; i++ {
+		srv.push(map[string]any{
+			"next-expected-sequence": int64(0),
+			"next-exchange-token":    "tok",
+			"messages":               []any{},
+		})
+	}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	tc, err := transport.New(transport.Config{})
+	if err != nil {
+		t.Fatalf("transport.New: %v", err)
+	}
+	store := persist.New(t.TempDir() + "/state.json")
+	st, _ := store.Load()
+	st.SecureID = "already-registered"
+	if err := store.Save(st); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	cfg := &config.Config{
+		URL:                    ts.URL,
+		AccountName:            "acc",
+		ExchangeInterval:       time.Hour,
+		UrgentExchangeInterval: time.Hour,
+	}
+	exc := New(cfg, store, tc)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- exc.Run(ctx) }()
+
+	// Let the initial exchange happen.
+	time.Sleep(200 * time.Millisecond)
+	baseline := srv.count()
+
+	for i := 0; i < 20; i++ {
+		if err := exc.Send(ctx, Message{"type": "cpu-usage"}); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	extra := srv.count() - baseline
+	cancel()
+	<-runDone
+
+	if extra > 0 {
+		t.Errorf("20 non-urgent sends triggered %d extra exchanges; exchange-interval was 1h", extra)
+	}
+}
+
+// TestSendUrgent_TriggersAnExchange asserts operation results are not delayed
+// until the next scheduled exchange — the server is waiting on those.
+func TestSendUrgent_TriggersAnExchange(t *testing.T) {
+	srv := &fakeServer{}
+	for i := 0; i < 5; i++ {
+		srv.push(map[string]any{
+			"next-expected-sequence": int64(0),
+			"next-exchange-token":    "tok",
+			"messages":               []any{},
+		})
+	}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	tc, err := transport.New(transport.Config{})
+	if err != nil {
+		t.Fatalf("transport.New: %v", err)
+	}
+	store := persist.New(t.TempDir() + "/state.json")
+	st, _ := store.Load()
+	st.SecureID = "already-registered"
+	if err := store.Save(st); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	cfg := &config.Config{
+		URL:                    ts.URL,
+		AccountName:            "acc",
+		ExchangeInterval:       time.Hour,
+		UrgentExchangeInterval: time.Hour,
+	}
+	exc := New(cfg, store, tc)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- exc.Run(ctx) }()
+
+	time.Sleep(200 * time.Millisecond)
+	baseline := srv.count()
+
+	if err := exc.SendResult(ctx, 42, StatusSucceeded, "done"); err != nil {
+		t.Fatalf("SendResult: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	extra := srv.count() - baseline
+	cancel()
+	<-runDone
+
+	if extra == 0 {
+		t.Error("an operation-result did not trigger an exchange")
+	}
+}
+
+// TestBackoff_EscalatesOn5xx asserts repeated server errors increase the delay
+// rather than retrying at a fixed interval, which lets a fleet hammer an
+// already-struggling server.
+func TestBackoff_EscalatesOn5xx(t *testing.T) {
+	b := newBackoff()
+
+	if d := b.current(); d != 0 {
+		t.Errorf("initial backoff should be zero, got %v", d)
+	}
+
+	b.failure(500)
+	first := b.current()
+	if first < 300*time.Second || first > 360*time.Second {
+		t.Errorf("first backoff should be ~300s with jitter, got %v", first)
+	}
+
+	b.failure(500)
+	second := b.current()
+	if second <= first {
+		t.Errorf("backoff should escalate: first=%v second=%v", first, second)
+	}
+
+	for i := 0; i < 20; i++ {
+		b.failure(503)
+	}
+	// current() adds up to 20% jitter on top of the capped base delay, so the
+	// bound is backoffMax plus one jitter step. The point is that the delay stays
+	// bounded near 7200s instead of growing unboundedly with every 5xx.
+	if capped := b.current(); capped > backoffMax+backoffMax/5 {
+		t.Errorf("backoff should cap near 7200s, got %v", capped)
+	}
+}
+
+func TestBackoff_DecaysOnSuccess(t *testing.T) {
+	b := newBackoff()
+	b.failure(500)
+	b.failure(500)
+	if b.current() == 0 {
+		t.Fatal("expected a non-zero backoff after failures")
+	}
+
+	b.success()
+	if d := b.current(); d != 0 {
+		t.Errorf("backoff should reset on success, got %v", d)
+	}
+}
+
+func TestBackoff_IgnoresClientErrors(t *testing.T) {
+	b := newBackoff()
+
+	// A 400 is our bug, not server overload; backing off does not help.
+	b.failure(400)
+	if d := b.current(); d != 0 {
+		t.Errorf("4xx other than 429 should not back off, got %v", d)
+	}
+
+	b.failure(429)
+	if d := b.current(); d == 0 {
+		t.Error("429 should back off")
+	}
+}
+
+func TestBackoff_JitterVaries(t *testing.T) {
+	seen := make(map[time.Duration]bool)
+	for i := 0; i < 20; i++ {
+		b := newBackoff()
+		b.failure(500)
+		seen[b.current()] = true
+	}
+	if len(seen) < 2 {
+		t.Error("backoff has no jitter; a fleet would retry in lockstep")
+	}
+}
+
+// TestPerformExchange_CapsMessagesPerRequest asserts a large backlog is drained
+// across several exchanges rather than sent as one enormous request.
+func TestPerformExchange_CapsMessagesPerRequest(t *testing.T) {
+	srv := &fakeServer{}
+	for i := 0; i < 10; i++ {
+		srv.push(map[string]any{
+			// ACK the 100 messages sent in the first exchange so they are not
+			// re-queued; only the un-sent remainder must stay queued.
+			"next-expected-sequence": int64(100),
+			"next-exchange-token":    "tok",
+			"messages":               []any{},
+		})
+	}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	tc, err := transport.New(transport.Config{})
+	if err != nil {
+		t.Fatalf("transport.New: %v", err)
+	}
+	store := persist.New(t.TempDir() + "/state.json")
+	st, _ := store.Load()
+	st.SecureID = "already-registered"
+	if err := store.Save(st); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	cfg := &config.Config{URL: ts.URL, AccountName: "acc"}
+	exc := New(cfg, store, tc)
+
+	for i := 0; i < 250; i++ {
+		if err := exc.Send(context.Background(), Message{"type": "cpu-usage"}); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+	}
+
+	state, _ := store.Load()
+	if err := exc.performExchange(context.Background(), state); err != nil {
+		t.Fatalf("performExchange: %v", err)
+	}
+
+	if srv.count() != 1 {
+		t.Fatalf("want 1 request, got %d", srv.count())
+	}
+	msgs, ok := srv.get(0).payload["messages"].([]any)
+	if !ok {
+		t.Fatalf("messages: unexpected type %T", srv.get(0).payload["messages"])
+	}
+	if len(msgs) > 100 {
+		t.Errorf("sent %d messages in one exchange; the cap is 100", len(msgs))
+	}
+
+	// The remainder must still be queued, not dropped.
+	exc.mu.Lock()
+	remaining := len(exc.pending)
+	exc.mu.Unlock()
+	if remaining != 150 {
+		t.Errorf("want 150 messages still queued, got %d", remaining)
 	}
 }

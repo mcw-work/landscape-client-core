@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -9,7 +10,7 @@ import (
 	"log"
 	"os"
 	"runtime"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -59,18 +60,15 @@ func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, stat
 		}
 	}
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-
 	doSend := func() {
 		processors := p.parseProcessors()
 		if processors == nil {
 			return
 		}
-		sort.Slice(processors, func(i, j int) bool {
-			idI, _ := processors[i]["processor-id"].(int)
-			idJ, _ := processors[j]["processor-id"].(int)
-			return idI < idJ
+		slices.SortStableFunc(processors, func(a, b map[string]any) int {
+			idA, _ := a["processor-id"].(int)
+			idB, _ := b["processor-id"].(int)
+			return cmp.Compare(idA, idB)
 		})
 		data, err := json.Marshal(processors)
 		if err != nil {
@@ -98,15 +96,11 @@ func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, stat
 
 	doSend()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.beat(p.Name())
-			doSend()
-		}
-	}
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(context.Context, time.Time) {
+		p.beat(p.Name())
+		doSend()
+	})
+	return nil
 }
 
 func (p *ProcessorInfo) parseProcessors() []map[string]any {
@@ -181,17 +175,25 @@ func (p *ProcessorInfo) parseARM64() []map[string]any {
 
 	var processors []map[string]any
 	var current map[string]any
+	// blockIndex gives blocks without a "processor" line a distinct sequential
+	// id; defaulting them all to 0 made them collide under the sort.
+	blockIndex := 0
+	finalize := func() {
+		if current == nil {
+			return
+		}
+		if _, ok := current["processor-id"]; !ok {
+			current["processor-id"] = blockIndex
+		}
+		processors = append(processors, current)
+		blockIndex++
+		current = nil
+	}
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
-			if current != nil {
-				if _, ok := current["processor-id"]; !ok {
-					current["processor-id"] = 0
-				}
-				processors = append(processors, current)
-				current = nil
-			}
+			finalize()
 			continue
 		}
 		parts := strings.SplitN(line, ":", 2)
@@ -227,11 +229,6 @@ func (p *ProcessorInfo) parseARM64() []map[string]any {
 			}
 		}
 	}
-	if current != nil {
-		if _, ok := current["processor-id"]; !ok {
-			current["processor-id"] = 0
-		}
-		processors = append(processors, current)
-	}
+	finalize()
 	return processors
 }

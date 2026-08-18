@@ -35,6 +35,7 @@ type ComputerInfo struct {
 	osReleasePath string
 	machineIDPath string
 	snapdClient   snapd.Client
+	getHostname   func() (string, error)
 	interval      time.Duration
 }
 
@@ -44,6 +45,7 @@ func NewComputerInfo(client snapd.Client) *ComputerInfo {
 		osReleasePath: "/etc/os-release",
 		machineIDPath: "/etc/machine-id",
 		snapdClient:   client,
+		getHostname:   os.Hostname,
 		interval:      5 * time.Minute,
 	}
 }
@@ -62,28 +64,31 @@ func (p *ComputerInfo) Run(ctx context.Context, sink exchange.MessageSink, state
 
 	p.tick(ctx, sink, state, &prev)
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.beat(p.Name())
-			p.tick(ctx, sink, state, &prev)
-		}
-	}
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		p.tick(ctx, sink, state, &prev)
+	})
+	return nil
 }
 
 func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor, prev *ciSavedState) {
-	hostname, _ := os.Hostname()
+	getHostname := p.getHostname
+	if getHostname == nil {
+		getHostname = os.Hostname
+	}
+	hostname, hostnameErr := getHostname()
+	if hostnameErr != nil {
+		// Omit the field rather than sending "", which the server reads as
+		// "this device has no hostname".
+		log.Printf("computer-info: reading hostname: %v", hostnameErr)
+	}
 	totalMemMB, totalSwapMB := p.readMeminfo()
 	machineID := p.readMachineID()
 	distID, description, release, codeName := p.readOSRelease()
 	serial, snapModel, brand := p.readSnapAssertions(ctx)
 
 	compMsg := exchange.Message{}
-	if !prev.Initialized || hostname != prev.Hostname {
+	if hostnameErr == nil && (!prev.Initialized || hostname != prev.Hostname) {
 		compMsg["hostname"] = hostname
 	}
 	if !prev.Initialized || totalMemMB != prev.TotalMemory {
@@ -141,9 +146,16 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 		}
 	}
 
+	// On a failed lookup keep the last known hostname so a transient error does
+	// not churn state or re-send once it recovers.
+	storedHostname := prev.Hostname
+	if hostnameErr == nil {
+		storedHostname = hostname
+	}
+
 	next := ciSavedState{
 		Initialized:   true,
-		Hostname:      hostname,
+		Hostname:      storedHostname,
 		TotalMemory:   totalMemMB,
 		TotalSwap:     totalSwapMB,
 		MachineID:     machineID,

@@ -137,6 +137,7 @@ func run(ctx context.Context, d deps) error {
 
 	// Create exchange.
 	exc := exchange.New(cfg, store, tc)
+	exc.SetSpool(filepath.Join(snapCommon, "queue.json"))
 
 	// Create monitor runner with all plugins.
 	snapPackages := monitor.NewSnapPackages(snapdClient)

@@ -53,42 +53,38 @@ func (p *RebootRequiredPlugin) Run(ctx context.Context, sink exchange.MessageSin
 		}
 	}
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.beat(p.Name())
-			callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
-			flag, err := p.snapd.GetRebootRequired(callCtx)
-			cancel()
-			if err != nil {
-				log.Printf("reboot-required: %v", err)
-				continue
-			}
-			if prevFlag != nil && *prevFlag == flag {
-				continue // no change, skip
-			}
-			// Value changed (or first sample): persist, then update the tracker
-			// only on a successful save so a failure is re-detected next tick.
-			if state != nil {
-				if err := state.SetPluginState(rebootState{Initialized: true, Flag: flag}); err != nil {
-					log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
-					continue
-				}
-			}
-			f := flag
-			prevFlag = &f
-			msg := exchange.Message{
-				"type":     "reboot-required-info",
-				"flag":     flag,
-				"packages": []any{},
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("reboot-required: send: %v", err)
+	// Python's rebootrequired sets run_immediately = True: a device that has just
+	// rebooted should not wait 5 minutes to tell the server it still needs one.
+	runTicker(ctx, p.interval, true, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+		flag, err := p.snapd.GetRebootRequired(callCtx)
+		cancel()
+		if err != nil {
+			log.Printf("reboot-required: %v", err)
+			return
+		}
+		if prevFlag != nil && *prevFlag == flag {
+			return // no change, skip
+		}
+		// Value changed (or first sample): persist, then update the tracker
+		// only on a successful save so a failure is re-detected next tick.
+		if state != nil {
+			if err := state.SetPluginState(rebootState{Initialized: true, Flag: flag}); err != nil {
+				log.Printf("%s: saving state: %v; will retry next tick", p.Name(), err)
+				return
 			}
 		}
-	}
+		f := flag
+		prevFlag = &f
+		msg := exchange.Message{
+			"type":     "reboot-required-info",
+			"flag":     flag,
+			"packages": []any{},
+		}
+		if err := sink.Send(ctx, msg); err != nil {
+			log.Printf("reboot-required: send: %v", err)
+		}
+	})
+	return nil
 }

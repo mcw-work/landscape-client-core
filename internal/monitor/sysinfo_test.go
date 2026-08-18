@@ -2,10 +2,13 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -326,6 +329,70 @@ SwapFree:       2097152 kB
 	}
 	if !gotCompInfo {
 		t.Error("expected a new computer-info message after memory change")
+	}
+}
+
+// TestComputerInfo_HostnameErrorIsNotSentAsEmpty asserts a failed hostname
+// lookup is not reported as an empty hostname. `hostname, _ := os.Hostname()`
+// sent "", which the server reads as "this device has no hostname".
+func TestComputerInfo_HostnameErrorIsNotSentAsEmpty(t *testing.T) {
+	p := NewComputerInfo(&snapd.MockClient{})
+	p.interval = 5 * time.Millisecond
+	p.getHostname = func() (string, error) {
+		return "", errors.New("simulated hostname failure")
+	}
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-errCh
+
+	for _, msg := range sink.Messages() {
+		v, ok := msg["hostname"]
+		if !ok {
+			continue
+		}
+		if s, isStr := v.(string); isStr && s == "" {
+			t.Error("sent an empty hostname after a failed lookup")
+		}
+		if b, isBytes := v.([]byte); isBytes && len(b) == 0 {
+			t.Error("sent an empty hostname after a failed lookup")
+		}
+	}
+}
+
+func TestComputerInfo_HostnameIsSentWhenAvailable(t *testing.T) {
+	p := NewComputerInfo(&snapd.MockClient{})
+	p.interval = 5 * time.Millisecond
+	p.getHostname = func() (string, error) { return "test-host", nil }
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+
+	msgs := waitForMessages(t, sink, 1, 1*time.Second)
+	cancel()
+	<-errCh
+
+	var found bool
+	for _, msg := range msgs {
+		if v, ok := msg["hostname"]; ok {
+			found = true
+			if fmt.Sprintf("%s", v) != "test-host" {
+				t.Errorf("hostname: want test-host, got %v", v)
+			}
+		}
+	}
+	if !found {
+		t.Error("no message carried a hostname")
 	}
 }
 
@@ -854,8 +921,9 @@ func TestMountInfo_DataWatcher(t *testing.T) {
 	// First tick: 1 mount-info + 1 free-space = 2 messages.
 	waitForMessages(t, sink, 2, 500*time.Millisecond)
 
-	// Let several more ticks pass; free-space is sent every tick,
-	// but mount-info should not repeat since the layout didn't change.
+	// Let several more ticks pass. Neither the mount layout nor the free space
+	// changes (constant statvfs mock), so neither message repeats: free-space is
+	// now change-detected rather than sent unconditionally every tick.
 	time.Sleep(60 * time.Millisecond)
 	cancel()
 	if err := <-errCh; err != nil {
@@ -871,8 +939,8 @@ func TestMountInfo_DataWatcher(t *testing.T) {
 	if countByType["mount-info"] != 1 {
 		t.Errorf("mount-info count: want 1 (data-watcher), got %d", countByType["mount-info"])
 	}
-	if countByType["free-space"] < 2 {
-		t.Errorf("free-space count: want ≥2, got %d", countByType["free-space"])
+	if countByType["free-space"] != 1 {
+		t.Errorf("free-space count: want 1 (unchanged free space is not re-sent), got %d", countByType["free-space"])
 	}
 }
 
@@ -919,6 +987,63 @@ func TestMountInfo_DataWatcherChange(t *testing.T) {
 	}
 	if finalMountInfoCount <= initialMountInfoCount {
 		t.Errorf("expected new mount-info after layout change; count before=%d after=%d", initialMountInfoCount, finalMountInfoCount)
+	}
+}
+
+// TestMountInfo_FreeSpaceChange asserts free-space is re-sent when the free
+// space actually changes, even though the mount layout does not. This is the
+// other half of the change-detection contract: unchanged free space is skipped
+// (TestMountInfo_DataWatcher), changed free space is reported.
+func TestMountInfo_FreeSpaceChange(t *testing.T) {
+	dir := t.TempDir()
+	mountsPath := filepath.Join(dir, "mounts")
+	writeFixture(t, mountsPath, mountsFixture)
+
+	var freeMB atomic.Int64
+	freeMB.Store(50)
+	p := &MountInfo{
+		mountsPath: mountsPath,
+		statvfs: func(_ string) (syscall.Statfs_t, error) {
+			const bsize = int64(4096)
+			return syscall.Statfs_t{
+				Bsize:  bsize,
+				Blocks: uint64(100 * 1024 * 1024 / bsize),
+				Bfree:  uint64(freeMB.Load() * 1024 * 1024 / bsize),
+			}, nil
+		},
+		interval: 5 * time.Millisecond,
+	}
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+
+	waitForMessages(t, sink, 2, 500*time.Millisecond)
+	initialFreeSpaceCount := 0
+	for _, m := range sink.Messages() {
+		if m["type"] == "free-space" {
+			initialFreeSpaceCount++
+		}
+	}
+
+	// Free space drops; the plugin must report the change.
+	freeMB.Store(25)
+	waitForMessages(t, sink, len(sink.Messages())+1, 500*time.Millisecond)
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	finalFreeSpaceCount := 0
+	for _, m := range sink.Messages() {
+		if m["type"] == "free-space" {
+			finalFreeSpaceCount++
+		}
+	}
+	if finalFreeSpaceCount <= initialFreeSpaceCount {
+		t.Errorf("expected new free-space after free space changed; count before=%d after=%d", initialFreeSpaceCount, finalFreeSpaceCount)
 	}
 }
 
@@ -1233,5 +1358,98 @@ func TestHardwareInfo_SendsValidXML(t *testing.T) {
 	}
 	if string(msgs[0]["data"].([]byte)) != valid {
 		t.Errorf("data was altered in transit")
+	}
+}
+
+// ─── diffProcesses tests ───────────────────────────────────────────────────
+
+// TestDiffProcesses_IgnoresCPUJitter asserts a process whose only change is its
+// CPU percentage is not reported as updated. Comparing whole structs made the
+// diff degenerate: any process doing work counted as changed.
+func TestDiffProcesses_IgnoresCPUJitter(t *testing.T) {
+	old := map[int64]processInfo{
+		1: {pid: 1, name: "init", state: "S", percentCPU: 0.1},
+		2: {pid: 2, name: "worker", state: "R", percentCPU: 3.4},
+	}
+	updated := map[int64]processInfo{
+		1: {pid: 1, name: "init", state: "S", percentCPU: 0.2},
+		2: {pid: 2, name: "worker", state: "R", percentCPU: 7.9},
+	}
+
+	creates, updates, deletes := diffProcesses(old, updated)
+
+	if len(creates) != 0 || len(deletes) != 0 {
+		t.Errorf("want no creates or deletes, got %d/%d", len(creates), len(deletes))
+	}
+	if len(updates) != 0 {
+		t.Errorf("CPU-only changes should not be reported as updates, got %d", len(updates))
+	}
+}
+
+// TestDiffProcesses_ReportsRealChanges guards against over-correcting: a state
+// change and a new process must still surface.
+func TestDiffProcesses_ReportsRealChanges(t *testing.T) {
+	old := map[int64]processInfo{
+		1: {pid: 1, name: "init", state: "S", percentCPU: 0.1},
+	}
+	updated := map[int64]processInfo{
+		1: {pid: 1, name: "init", state: "Z", percentCPU: 0.1},
+		2: {pid: 2, name: "new", state: "R"},
+	}
+
+	creates, updates, deletes := diffProcesses(old, updated)
+
+	if len(creates) != 1 {
+		t.Errorf("want 1 created process, got %d", len(creates))
+	}
+	if len(updates) != 1 {
+		t.Errorf("a state change S->Z must be reported, got %d updates", len(updates))
+	}
+	if len(deletes) != 0 {
+		t.Errorf("want no deletes, got %d", len(deletes))
+	}
+}
+
+// TestProcStat_FitsInReadBuffer asserts every /proc/<pid>/stat line on this host
+// is well under the 4 KiB reuse buffer, so the single short read in
+// readProcessInfo never truncates a stat line.
+func TestProcStat_FitsInReadBuffer(t *testing.T) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		t.Skipf("cannot read /proc: %v", err)
+	}
+	const bufSize = 4096
+	checked := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, err := strconv.ParseInt(e.Name(), 10, 64); err != nil {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
+		if err != nil {
+			continue // process exited between listing and reading
+		}
+		if len(data) >= bufSize {
+			t.Errorf("pid %s stat is %d bytes, not under %d", e.Name(), len(data), bufSize)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Skip("no readable /proc/<pid>/stat entries")
+	}
+}
+
+// BenchmarkActiveProcessInfo_Collect measures per-tick allocation of the full
+// read-and-diff path against the live /proc.
+func BenchmarkActiveProcessInfo_Collect(b *testing.B) {
+	p := NewActiveProcessInfo()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := p.buildMessage(); err != nil {
+			b.Fatalf("buildMessage: %v", err)
+		}
 	}
 }

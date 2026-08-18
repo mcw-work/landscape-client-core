@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -20,6 +23,64 @@ import (
 )
 
 const apiVersion = "3.3"
+
+// maxMessagesPerExchange matches the Python client's max_messages.
+const maxMessagesPerExchange = 100
+
+const (
+	backoffMin = 300 * time.Second
+	backoffMax = 7200 * time.Second
+)
+
+// backoff sheds load from an overloaded server. Without it a fleet of devices
+// retries at a fixed interval against a server that is already struggling.
+// Ported from Python's ExponentialBackoff.
+type backoff struct {
+	delay time.Duration
+	rand  *rand.Rand
+}
+
+func newBackoff() *backoff {
+	return &backoff{rand: rand.New(rand.NewSource(time.Now().UnixNano()))}
+}
+
+// failure records an HTTP status. Only 429 and 5xx back off: a 4xx other than
+// 429 is our own bad request, and waiting does not help.
+func (b *backoff) failure(status int) {
+	if status != 429 && (status < 500 || status > 599) {
+		return
+	}
+	if b.delay == 0 {
+		b.delay = backoffMin
+	} else {
+		b.delay *= 2
+	}
+	if b.delay > backoffMax {
+		b.delay = backoffMax
+	}
+}
+
+func (b *backoff) success() {
+	b.delay = 0
+}
+
+// current returns the delay with up to 20% jitter, so a fleet does not retry in
+// lockstep.
+func (b *backoff) current() time.Duration {
+	if b.delay == 0 {
+		return 0
+	}
+	jitter := time.Duration(b.rand.Int63n(int64(b.delay) / 5))
+	return b.delay + jitter
+}
+
+// previousAPIVersion returns the API version to fall back to when the server
+// returns 404 for the current version. This client speaks only one API version,
+// so there is no earlier version to downgrade to; the 404 is logged explicitly
+// instead of inventing a version ladder.
+func previousAPIVersion(_ string) string {
+	return ""
+}
 
 // Message is a single Landscape protocol message (a bpickle dict).
 type Message map[string]any
@@ -61,6 +122,9 @@ type Exchange struct {
 	handlers   map[string][]func(ctx context.Context, msg Message)
 	insecureID string        // guarded by mu; updated from set-id messages
 	wake       chan struct{} // buffered(1); written by TriggerExchange
+	// spool persists the pending queue across restarts. nil disables persistence
+	// (used by tests that do not exercise durability).
+	spool *spool
 	// dispatchCtx is the daemon-lifetime context used to run inbound message
 	// handlers. Handler lifetime must not be tied to the exchange cycle:
 	// manager.Runner dispatches into a goroutine and returns immediately, so a
@@ -76,6 +140,34 @@ func New(cfg *config.Config, store *persist.Store, tc *transport.Client) *Exchan
 		transport: tc,
 		handlers:  make(map[string][]func(ctx context.Context, msg Message)),
 		wake:      make(chan struct{}, 1),
+	}
+}
+
+// SetSpool enables durable persistence of the pending queue to the given path.
+// The queue is a separate file from state.json so a queue write can never touch
+// SecureID or the outbound sequence number.
+func (e *Exchange) SetSpool(path string) {
+	e.spool = newSpool(path)
+}
+
+// persistQueue bounds and writes the queue. Called after every mutation so an
+// unexpected restart loses at most the messages queued since the last exchange.
+func (e *Exchange) persistQueue() {
+	if e.spool == nil {
+		return
+	}
+	e.mu.Lock()
+	kept, dropped := enforceQueueBound(e.pending)
+	e.pending = kept
+	snapshot := make([]Message, len(kept))
+	copy(snapshot, kept)
+	e.mu.Unlock()
+
+	if dropped > 0 {
+		log.Printf("exchange: queue full; dropped %d oldest telemetry message(s), operation results retained", dropped)
+	}
+	if err := e.spool.save(snapshot); err != nil {
+		log.Printf("exchange: %v", err)
 	}
 }
 
@@ -118,13 +210,49 @@ func (e *Exchange) Run(ctx context.Context) error {
 	e.dispatchCtx = ctx
 	e.mu.Unlock()
 
+	// Restore any messages queued before the last restart, prepending them so
+	// they are sent before newly generated telemetry.
+	if e.spool != nil {
+		restored, err := e.spool.load()
+		if err != nil {
+			log.Printf("exchange: %v", err)
+		} else if len(restored) > 0 {
+			e.mu.Lock()
+			e.pending = append(restored, e.pending...)
+			e.mu.Unlock()
+			log.Printf("exchange: restored %d queued message(s) from the spool", len(restored))
+		}
+	}
+
+	bo := newBackoff()
+
 	for {
 		prevSecureID := state.SecureID
-		if err := e.performExchange(ctx, state); err != nil {
+		err := e.performExchange(ctx, state)
+		// Persist after every exchange attempt: performExchange re-queues on
+		// transport failure and on a partial server ACK, so this covers both the
+		// success and error paths.
+		e.persistQueue()
+		if err != nil {
 			log.Printf("exchange: exchange failed: %v", err)
+			var httpErr *transport.HTTPError
+			if errors.As(err, &httpErr) {
+				if httpErr.StatusCode == 404 {
+					// An older server does not know this API version. Python drops
+					// to the previous version rather than failing permanently.
+					if downgraded := previousAPIVersion(apiVersion); downgraded != "" {
+						log.Printf("exchange: server returned 404; downgrading API %s -> %s", apiVersion, downgraded)
+					} else {
+						log.Printf("exchange: server returned 404 (unknown API version %s); no earlier version to downgrade to", apiVersion)
+					}
+				}
+				bo.failure(httpErr.StatusCode)
+			}
+		} else {
+			bo.success()
 		}
 		e.mu.Lock()
-		hasPending := len(e.pending) > 0
+		hasUrgent := e.hasUrgentPendingLocked()
 		e.mu.Unlock()
 
 		justRegistered := prevSecureID == "" && state.SecureID != ""
@@ -133,8 +261,16 @@ func (e *Exchange) Run(ctx context.Context) error {
 		// polls quickly after the server processes the registration request.
 		// Also use urgent interval immediately after registration so device
 		// info is delivered without waiting 15 minutes.
-		if hasPending || state.SecureID == "" || justRegistered {
+		if hasUrgent || state.SecureID == "" || justRegistered {
 			interval = e.cfg.UrgentExchangeInterval
+		}
+
+		// Apply the backoff after the urgent-interval selection: a server
+		// returning 503 should not be polled at the urgent interval just because
+		// an operation result is queued.
+		if d := bo.current(); d > interval {
+			log.Printf("exchange: backing off for %v after server errors", d)
+			interval = d
 		}
 
 		if timer == nil {
@@ -160,15 +296,46 @@ func (e *Exchange) Run(ctx context.Context) error {
 			if err := e.performExchange(graceCtx, state); err != nil {
 				log.Printf("exchange: final drain exchange failed: %v", err)
 			}
+			// Persist whatever remains so a shutdown (including a snap refresh)
+			// does not drop unsent messages.
+			e.persistQueue()
 			return nil
 		}
 	}
 }
 
-// Send enqueues a message for the next exchange and wakes the exchange loop
-// so the message is delivered promptly rather than waiting for the next timer tick.
-// Safe to call from multiple goroutines.
+// isUrgentType reports whether a message must not wait for the next scheduled
+// exchange. The server blocks on operation results.
+func isUrgentType(msgType string) bool {
+	return msgType == "operation-result"
+}
+
+// hasUrgentPendingLocked reports whether the queue holds a message that should
+// shorten the next exchange interval. Caller must hold e.mu.
+func (e *Exchange) hasUrgentPendingLocked() bool {
+	for _, m := range e.pending {
+		t, _ := m["type"].(string)
+		if isUrgentType(t) {
+			return true
+		}
+	}
+	return false
+}
+
+// Send enqueues a message for the next scheduled exchange. It does NOT wake the
+// exchange loop: plugin telemetry that triggered an exchange per message made
+// exchange-interval meaningless — measured 60x the configured rate on a device
+// with memory-info at 15s. Matches Python's send_message(urgent=False) default.
 func (e *Exchange) Send(_ context.Context, msg Message) error {
+	e.mu.Lock()
+	e.pending = append(e.pending, msg)
+	e.mu.Unlock()
+	return nil
+}
+
+// SendUrgent enqueues a message and wakes the exchange loop immediately. Use it
+// only for messages the server is waiting on, such as operation results.
+func (e *Exchange) SendUrgent(_ context.Context, msg Message) error {
 	e.mu.Lock()
 	e.pending = append(e.pending, msg)
 	e.mu.Unlock()
@@ -197,7 +364,7 @@ func (e *Exchange) sendOperationResult(ctx context.Context, operationID int64, s
 	if resultCode != nil {
 		msg["result-code"] = *resultCode
 	}
-	return e.Send(ctx, msg)
+	return e.SendUrgent(ctx, msg)
 }
 
 // SendResult enqueues an operation-result message.
@@ -231,17 +398,23 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			"access_group":          e.cfg.AccessGroup,
 		}
 		e.mu.Lock()
-		e.pending = append([]Message{regMsg}, e.pending...)
+		e.pending = slices.Insert(e.pending, 0, regMsg)
 		e.mu.Unlock()
 		log.Printf("exchange: sending registration request (account=%q title=%q key-set=%v)",
 			e.cfg.AccountName, e.cfg.ComputerTitle, e.cfg.RegistrationKey != "")
 	}
 
-	// Take a snapshot of pending under lock and clear the queue.
+	// Drain at most maxMessagesPerExchange, matching Python's max_messages. A
+	// restored spool after a long outage would otherwise produce one enormous
+	// request.
 	e.mu.Lock()
-	snapshot := make([]Message, len(e.pending))
-	copy(snapshot, e.pending)
-	e.pending = nil
+	n := len(e.pending)
+	if n > maxMessagesPerExchange {
+		n = maxMessagesPerExchange
+	}
+	snapshot := make([]Message, n)
+	copy(snapshot, e.pending[:n])
+	e.pending = e.pending[n:]
 	e.mu.Unlock()
 
 	// Filter out message types the server has not declared it handles.
@@ -339,7 +512,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	if err != nil {
 		// Re-queue the snapshot so messages are not lost on transport failure.
 		e.mu.Lock()
-		e.pending = append(snapshot, e.pending...)
+		e.pending = slices.Insert(e.pending, 0, snapshot...)
 		e.mu.Unlock()
 		return fmt.Errorf("exchange: posting to server: %w", err)
 	}
@@ -383,7 +556,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		}
 		if nAcked < len(snapshot) {
 			e.mu.Lock()
-			e.pending = append(snapshot[nAcked:], e.pending...)
+			e.pending = slices.Insert(e.pending, 0, snapshot[nAcked:]...)
 			e.mu.Unlock()
 			log.Printf("exchange: server ACK'd %d/%d messages (our seq=%d, server wants=%d); re-queuing %d",
 				nAcked, len(snapshot), state.OutboundSequence, serverACK, len(snapshot)-nAcked)
@@ -470,7 +643,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 				resyncAck["operation-id"] = opid
 			}
 			e.mu.Lock()
-			e.pending = append([]Message{resyncAck}, e.pending...)
+			e.pending = slices.Insert(e.pending, 0, resyncAck)
 			e.mu.Unlock()
 			log.Printf("exchange: received resynchronize from server, queuing ack")
 		case "unknown-id":
@@ -538,6 +711,15 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		return nil
 	}); err != nil {
 		return fmt.Errorf("exchange: saving state: %w", err)
+	}
+
+	// If messages are still queued (capped backlog or a re-queue), wake the loop
+	// so the backlog drains promptly rather than one batch per interval.
+	e.mu.Lock()
+	backlog := len(e.pending) > 0
+	e.mu.Unlock()
+	if backlog {
+		e.TriggerExchange()
 	}
 
 	return nil

@@ -146,6 +146,47 @@ func TestCPUUsage_ContextCancel(t *testing.T) {
 	}
 }
 
+// TestCPUUsage_BatchedMessageShapeIsUnchanged asserts batching is additive: the
+// same field carries N tuples instead of 1, with identical tuple shape.
+func TestCPUUsage_BatchedMessageShapeIsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	statPath := filepath.Join(dir, "stat")
+	writeFixture(t, statPath, "cpu  100 0 100 800 0 0 0 0 0 0\n")
+
+	p := &CPUUsage{
+		procStatPath: statPath,
+		interval:     5 * time.Millisecond,
+		sendInterval: 20 * time.Millisecond,
+	}
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+
+	// A static /proc/stat yields usage<0 forever, so nudge the counters once to
+	// produce a real point; the accumulator then drains it after the window.
+	time.Sleep(20 * time.Millisecond)
+	writeFixture(t, statPath, "cpu  200 0 200 1400 0 0 0 0 0 0\n")
+
+	msgs := waitForMessages(t, sink, 1, 1*time.Second)
+	cancel()
+	<-errCh
+
+	points, ok := msgs[0]["cpu-usages"].([]any)
+	if !ok {
+		t.Fatalf("cpu-usages: want []any, got %T", msgs[0]["cpu-usages"])
+	}
+	if len(points) == 0 {
+		t.Fatal("no points in the batched message")
+	}
+	if _, ok := points[0].(bpickle.Tuple); !ok {
+		t.Errorf("point 0: want bpickle.Tuple, got %T", points[0])
+	}
+}
+
 // ---- MemoryInfo tests -------------------------------------------------------
 
 const meminfoFixture = `MemTotal:       16384 kB

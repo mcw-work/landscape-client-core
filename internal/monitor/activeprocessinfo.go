@@ -39,6 +39,11 @@ type ActiveProcessInfo struct {
 	interval    time.Duration
 	initialized bool
 	previous    map[int64]processInfo
+	// scratch is filled each tick and swapped with previous after the diff, so
+	// rebuilding the process table every 30s no longer allocates a fresh map.
+	scratch map[int64]processInfo
+	// buf is reused across PIDs and ticks; /proc/<pid>/stat is well under 4 KiB.
+	buf []byte
 }
 
 // NewActiveProcessInfo returns an ActiveProcessInfo plugin with default settings.
@@ -56,27 +61,21 @@ func (p *ActiveProcessInfo) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic process info collection loop.
 func (p *ActiveProcessInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.beat(p.Name())
-			msg, err := p.buildMessage()
-			if err != nil {
-				log.Printf("active-process-info: %v", err)
-				continue
-			}
-			if msg == nil {
-				continue
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("active-process-info: send: %v", err)
-			}
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		msg, err := p.buildMessage()
+		if err != nil {
+			log.Printf("active-process-info: %v", err)
+			return
 		}
-	}
+		if msg == nil {
+			return
+		}
+		if err := sink.Send(ctx, msg); err != nil {
+			log.Printf("active-process-info: send: %v", err)
+		}
+	})
+	return nil
 }
 
 // buildMessage reads current processes and constructs a diff message.
@@ -90,10 +89,18 @@ func (p *ActiveProcessInfo) buildMessage() (exchange.Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading uptime: %w", err)
 	}
-	current, err := p.readAllProcesses(bootTime, uptime)
-	if err != nil {
+	// Fill scratch this tick, then swap it with previous so next tick reuses the
+	// old map via clear() instead of allocating. previous still holds last tick's
+	// data for the diff and must not be cleared before it.
+	if p.scratch == nil {
+		p.scratch = make(map[int64]processInfo, 256)
+	} else {
+		clear(p.scratch)
+	}
+	if err := p.readAllProcessesInto(p.scratch, bootTime, uptime); err != nil {
 		return nil, fmt.Errorf("reading processes: %w", err)
 	}
+	current := p.scratch
 
 	msg := exchange.Message{"type": "active-process-info"}
 
@@ -108,12 +115,12 @@ func (p *ActiveProcessInfo) buildMessage() (exchange.Message, error) {
 			msg["add-processes"] = adds
 		}
 		p.initialized = true
-		p.previous = current
+		p.previous, p.scratch = p.scratch, p.previous
 		return msg, nil
 	}
 
 	creates, updates, deletes := diffProcesses(p.previous, current)
-	p.previous = current
+	p.previous, p.scratch = p.scratch, p.previous
 
 	if len(creates) == 0 && len(updates) == 0 && len(deletes) == 0 {
 		return nil, nil
@@ -167,6 +174,9 @@ func (p *ActiveProcessInfo) readBootTime() (int64, error) {
 			return t, nil
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("scanning proc/stat: %w", err)
+	}
 	return 0, fmt.Errorf("btime not found in proc/stat")
 }
 
@@ -187,14 +197,15 @@ func (p *ActiveProcessInfo) readUptime() (float64, error) {
 	return uptime, nil
 }
 
-// readAllProcesses iterates numeric subdirectories of procRoot and collects
-// process info, skipping processes that have already exited.
-func (p *ActiveProcessInfo) readAllProcesses(bootTime int64, uptime float64) (map[int64]processInfo, error) {
+// readAllProcessesInto iterates numeric subdirectories of procRoot and fills the
+// caller-provided map with process info, skipping processes that have already
+// exited. The map is filled rather than allocated so it can be reused across
+// ticks.
+func (p *ActiveProcessInfo) readAllProcessesInto(dst map[int64]processInfo, bootTime int64, uptime float64) error {
 	entries, err := os.ReadDir(p.procRoot)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", p.procRoot, err)
+		return fmt.Errorf("reading %s: %w", p.procRoot, err)
 	}
-	processes := make(map[int64]processInfo)
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -210,9 +221,9 @@ func (p *ActiveProcessInfo) readAllProcesses(bootTime int64, uptime float64) (ma
 		if info.state == "X" {
 			continue // dead process
 		}
-		processes[pid] = *info
+		dst[pid] = *info
 	}
-	return processes, nil
+	return nil
 }
 
 // clkTck is the kernel timer frequency; 100 Hz is universal on modern Linux.
@@ -223,10 +234,19 @@ const clkTck = 100
 func (p *ActiveProcessInfo) readProcessInfo(pid int64, bootTime int64, uptime float64) (*processInfo, error) {
 	pidStr := strconv.FormatInt(pid, 10)
 	statPath := filepath.Join(p.procRoot, pidStr, "stat")
-	data, err := os.ReadFile(statPath)
+	if p.buf == nil {
+		p.buf = make([]byte, 4096)
+	}
+	f, err := os.Open(statPath)
 	if err != nil {
 		return nil, err
 	}
+	n, err := f.Read(p.buf)
+	_ = f.Close()
+	if err != nil && n == 0 {
+		return nil, err
+	}
+	data := p.buf[:n]
 
 	line := strings.TrimSpace(string(data))
 	// comm may contain spaces and parentheses; find the last ')'.
@@ -243,10 +263,24 @@ func (p *ActiveProcessInfo) readProcessInfo(pid int64, bootTime int64, uptime fl
 		return nil, fmt.Errorf("too few fields in stat for pid %d", pid)
 	}
 	state := rest[0]
-	utime, _ := strconv.ParseInt(rest[11], 10, 64)
-	stime, _ := strconv.ParseInt(rest[12], 10, 64)
-	startJiffies, _ := strconv.ParseInt(rest[19], 10, 64)
-	vsize, _ := strconv.ParseInt(rest[20], 10, 64)
+	// A malformed numeric field must skip the process, not report it as 0%% CPU
+	// started at boot time.
+	utime, err := strconv.ParseInt(rest[11], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parsing utime for pid %d: %w", pid, err)
+	}
+	stime, err := strconv.ParseInt(rest[12], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parsing stime for pid %d: %w", pid, err)
+	}
+	startJiffies, err := strconv.ParseInt(rest[19], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parsing starttime for pid %d: %w", pid, err)
+	}
+	vsize, err := strconv.ParseInt(rest[20], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parsing vsize for pid %d: %w", pid, err)
+	}
 
 	startTimeSec := bootTime + startJiffies/clkTck
 	totalTime := utime + stime
@@ -301,6 +335,9 @@ func (p *ActiveProcessInfo) readStatusInto(pid int64, info *processInfo) {
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("active-process-info: scanning status for pid %d: %v", pid, err)
+	}
 }
 
 // processToMap converts a processInfo to the map structure expected by the
@@ -322,6 +359,19 @@ func processToMap(info processInfo) map[string]any {
 // creates: PIDs present in current but not old.
 // updates: PIDs present in both but with changed fields.
 // deletes: PIDs present in old but not current.
+// processChanged reports whether a process differs in a way worth telling the
+// server about. percentCPU is deliberately excluded: it is a lifetime average
+// that moves on every tick for any process doing work, so including it made
+// update-processes carry most of the table every 30s and the diff saved nothing.
+func processChanged(old, updated processInfo) bool {
+	return old.name != updated.name ||
+		old.state != updated.state ||
+		old.vmSize != updated.vmSize ||
+		old.uid != updated.uid ||
+		old.gid != updated.gid ||
+		old.startTime != updated.startTime
+}
+
 func diffProcesses(old, current map[int64]processInfo) (creates, updates map[int64]processInfo, deletes []int64) {
 	creates = make(map[int64]processInfo)
 	updates = make(map[int64]processInfo)
@@ -329,7 +379,7 @@ func diffProcesses(old, current map[int64]processInfo) (creates, updates map[int
 		oldInfo, existed := old[pid]
 		if !existed {
 			creates[pid] = newInfo
-		} else if oldInfo != newInfo {
+		} else if processChanged(oldInfo, newInfo) {
 			updates[pid] = newInfo
 		}
 	}

@@ -37,17 +37,11 @@ func (p *SnapPackagesPlugin) Interval() time.Duration { return p.interval }
 // installed list to keep the server in sync.
 func (p *SnapPackagesPlugin) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	p.send(ctx, sink)
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.beat(p.Name())
-			p.send(ctx, sink)
-		}
-	}
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		p.send(ctx, sink)
+	})
+	return nil
 }
 
 // SendNow immediately collects and sends the current snap list to sink.
