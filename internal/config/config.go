@@ -81,7 +81,7 @@ func Load(l Loader) (*Config, error) {
 	for _, rf := range required {
 		v, err := l.Get(rf.key)
 		if err != nil {
-			return nil, fmt.Errorf("reading config key %q: %w", rf.key, err)
+			return nil, fmt.Errorf("cannot read config key %q: %w", rf.key, err)
 		}
 		if v == "" {
 			missing = append(missing, rf.key)
@@ -115,7 +115,7 @@ func Load(l Loader) (*Config, error) {
 	for _, df := range durations {
 		v, err := l.Get(df.key)
 		if err != nil {
-			return nil, fmt.Errorf("reading config key %q: %w", df.key, err)
+			return nil, fmt.Errorf("cannot read config key %q: %w", df.key, err)
 		}
 		if v == "" {
 			*df.field = df.defaultValue
@@ -147,7 +147,7 @@ func Load(l Loader) (*Config, error) {
 	for _, of := range optional {
 		v, err := l.Get(of.key)
 		if err != nil {
-			return nil, fmt.Errorf("reading config key %q: %w", of.key, err)
+			return nil, fmt.Errorf("cannot read config key %q: %w", of.key, err)
 		}
 		if v != "" {
 			*of.field = v
@@ -194,7 +194,7 @@ func ConfDBViewJSON(l Loader) (string, bool, error) {
 	for _, key := range requiredKeys {
 		value, err := l.Get(key)
 		if err != nil {
-			return "", false, fmt.Errorf("reading config key %q: %w", key, err)
+			return "", false, fmt.Errorf("cannot read config key %q: %w", key, err)
 		}
 		if value == "" {
 			return "", false, nil
@@ -222,7 +222,7 @@ func ConfDBViewJSON(l Loader) (string, bool, error) {
 	for _, key := range stringKeys {
 		value, err := l.Get(key)
 		if err != nil {
-			return "", false, fmt.Errorf("reading config key %q: %w", key, err)
+			return "", false, fmt.Errorf("cannot read config key %q: %w", key, err)
 		}
 		if value != "" {
 			payload[key] = value
@@ -233,7 +233,7 @@ func ConfDBViewJSON(l Loader) (string, bool, error) {
 	for _, key := range intKeys {
 		value, err := l.Get(key)
 		if err != nil {
-			return "", false, fmt.Errorf("reading config key %q: %w", key, err)
+			return "", false, fmt.Errorf("cannot read config key %q: %w", key, err)
 		}
 		if value == "" {
 			continue

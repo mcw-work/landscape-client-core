@@ -110,7 +110,7 @@ func (p *Pinger) doPing(ctx context.Context, insecureID string) (bool, error) {
 
 	raw, err := bpickle.Unmarshal(respBytes)
 	if err != nil {
-		return false, fmt.Errorf("decoding response: %w", err)
+		return false, fmt.Errorf("cannot decode response: %w", err)
 	}
 
 	m, ok := raw.(map[string]any)

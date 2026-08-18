@@ -170,7 +170,7 @@ func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *p
 func (p *MountInfo) readMounts() ([]map[string]any, error) {
 	f, err := os.Open(p.mountsPath)
 	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", p.mountsPath, err)
+		return nil, fmt.Errorf("cannot open %s: %w", p.mountsPath, err)
 	}
 	defer func() {
 		_ = f.Close()

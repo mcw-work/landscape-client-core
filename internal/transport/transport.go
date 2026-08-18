@@ -69,7 +69,7 @@ func New(cfg Config) (*Client, error) {
 	if cfg.SSLPublicKey != "" {
 		pemData, err := os.ReadFile(cfg.SSLPublicKey)
 		if err != nil {
-			return nil, fmt.Errorf("transport: reading SSL public key: %w", err)
+			return nil, fmt.Errorf("transport: cannot read SSL public key: %w", err)
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pemData) {
@@ -136,7 +136,7 @@ func (c *Client) doRequest(ctx context.Context, method, rawURL string, inBody io
 
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, inBody)
 	if err != nil {
-		return nil, fmt.Errorf("transport: creating request: %w", err)
+		return nil, fmt.Errorf("transport: cannot create request: %w", err)
 	}
 
 	for k, v := range headers {
@@ -145,7 +145,7 @@ func (c *Client) doRequest(ctx context.Context, method, rawURL string, inBody io
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("transport: sending request: %w", err)
+		return nil, fmt.Errorf("transport: cannot send request: %w", err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -157,7 +157,7 @@ func (c *Client) doRequest(ctx context.Context, method, rawURL string, inBody io
 	}
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		return nil, fmt.Errorf("transport: reading response from %s: %w", rawURL, err)
+		return nil, fmt.Errorf("transport: cannot read response from %s: %w", rawURL, err)
 	}
 	return respBody, nil
 }

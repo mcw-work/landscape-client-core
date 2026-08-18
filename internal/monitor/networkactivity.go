@@ -103,7 +103,7 @@ func (p *NetworkActivity) Run(ctx context.Context, sink exchange.MessageSink, _ 
 func (p *NetworkActivity) readDev() (rx, tx map[string]int64, err error) {
 	f, err := os.Open(p.procNetDevPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("opening %s: %w", p.procNetDevPath, err)
+		return nil, nil, fmt.Errorf("cannot open %s: %w", p.procNetDevPath, err)
 	}
 	defer func() {
 		_ = f.Close()

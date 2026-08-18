@@ -194,7 +194,7 @@ func (e *Exchange) InsecureID() string {
 func (e *Exchange) Run(ctx context.Context) error {
 	state, err := e.store.Load()
 	if err != nil {
-		return fmt.Errorf("exchange: loading state: %w", err)
+		return fmt.Errorf("exchange: cannot load state: %w", err)
 	}
 
 	var timer *time.Timer
@@ -489,7 +489,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	// Marshal payload.
 	body, err := bpickle.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("exchange: marshaling payload: %w", err)
+		return fmt.Errorf("exchange: cannot marshal payload: %w", err)
 	}
 
 	// Build request headers.
@@ -512,13 +512,13 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		e.mu.Lock()
 		e.pending = slices.Insert(e.pending, 0, snapshot...)
 		e.mu.Unlock()
-		return fmt.Errorf("exchange: posting to server: %w", err)
+		return fmt.Errorf("exchange: cannot post to server: %w", err)
 	}
 
 	// Decode response.
 	rawResponse, err := bpickle.Unmarshal(responseBytes)
 	if err != nil {
-		return fmt.Errorf("exchange: unmarshaling response: %w", err)
+		return fmt.Errorf("exchange: cannot unmarshal response: %w", err)
 	}
 	response, ok := rawResponse.(map[string]any)
 	if !ok {
@@ -706,7 +706,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 
 		return nil
 	}); err != nil {
-		return fmt.Errorf("exchange: saving state: %w", err)
+		return fmt.Errorf("exchange: cannot save state: %w", err)
 	}
 
 	// If messages are still queued (capped backlog or a re-queue), wake the loop

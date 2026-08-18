@@ -70,7 +70,7 @@ func (p *LoadAverage) Run(ctx context.Context, sink exchange.MessageSink, _ *per
 func (p *LoadAverage) sample() (float64, error) {
 	data, err := os.ReadFile(p.procLoadavgPath)
 	if err != nil {
-		return 0, fmt.Errorf("reading %s: %w", p.procLoadavgPath, err)
+		return 0, fmt.Errorf("cannot read %s: %w", p.procLoadavgPath, err)
 	}
 	fields := strings.Fields(string(data))
 	if len(fields) < 1 {
@@ -78,7 +78,7 @@ func (p *LoadAverage) sample() (float64, error) {
 	}
 	load, err := strconv.ParseFloat(fields[0], 64)
 	if err != nil {
-		return 0, fmt.Errorf("parsing load average from %s: %w", p.procLoadavgPath, err)
+		return 0, fmt.Errorf("cannot parse load average from %s: %w", p.procLoadavgPath, err)
 	}
 	return load, nil
 }

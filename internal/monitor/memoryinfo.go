@@ -71,7 +71,7 @@ func (p *MemoryInfo) Run(ctx context.Context, sink exchange.MessageSink, _ *pers
 func (p *MemoryInfo) sample() (freeMemMB, freeSwapMB int64, err error) {
 	f, err := os.Open(p.procMeminfoPath)
 	if err != nil {
-		return 0, 0, fmt.Errorf("opening %s: %w", p.procMeminfoPath, err)
+		return 0, 0, fmt.Errorf("cannot open %s: %w", p.procMeminfoPath, err)
 	}
 	defer func() {
 		_ = f.Close()

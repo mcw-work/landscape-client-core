@@ -94,7 +94,7 @@ func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, stat
 func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 	ifaces, err := p.getInterfaces()
 	if err != nil {
-		return nil, nil, fmt.Errorf("listing interfaces: %w", err)
+		return nil, nil, fmt.Errorf("cannot list interfaces: %w", err)
 	}
 
 	sort.Slice(ifaces, func(i, j int) bool {

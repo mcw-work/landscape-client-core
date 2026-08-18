@@ -137,7 +137,7 @@ func (c *RealClient) post(ctx context.Context, path string, body any) (*snapdRes
 func decodeResponse(r io.Reader) (*snapdResponse, error) {
 	var sr snapdResponse
 	if err := json.NewDecoder(r).Decode(&sr); err != nil {
-		return nil, fmt.Errorf("snapd: decoding response: %w", err)
+		return nil, fmt.Errorf("snapd: cannot decode response: %w", err)
 	}
 	if sr.Type == "error" {
 		var e snapdError
@@ -155,7 +155,7 @@ func (c *RealClient) ListSnaps(ctx context.Context) ([]SnapInfo, error) {
 	}
 	var snaps []SnapInfo
 	if err := json.Unmarshal(sr.Result, &snaps); err != nil {
-		return nil, fmt.Errorf("snapd: parsing snaps: %w", err)
+		return nil, fmt.Errorf("snapd: cannot parse snaps: %w", err)
 	}
 	return snaps, nil
 }
@@ -168,7 +168,7 @@ func (c *RealClient) ListServices(ctx context.Context) ([]ServiceInfo, error) {
 	}
 	var services []ServiceInfo
 	if err := json.Unmarshal(sr.Result, &services); err != nil {
-		return nil, fmt.Errorf("snapd: parsing services: %w", err)
+		return nil, fmt.Errorf("snapd: cannot parse services: %w", err)
 	}
 	return services, nil
 }
@@ -249,7 +249,7 @@ func (c *RealClient) WaitForChange(ctx context.Context, changeID string) error {
 		}
 		var cr changeResult
 		if err := json.Unmarshal(sr.Result, &cr); err != nil {
-			return fmt.Errorf("snapd: parsing change: %w", err)
+			return fmt.Errorf("snapd: cannot parse change: %w", err)
 		}
 		switch cr.Status {
 		case "Done":
@@ -280,7 +280,7 @@ func (c *RealClient) GetAssertions(ctx context.Context) (*Assertions, error) {
 
 	headers, err := c.fetchAssertionHeaders(ctx, "/assertions/serial")
 	if err != nil && !errors.Is(err, errNotFound) {
-		return nil, fmt.Errorf("snapd: fetching serial assertion: %w", err)
+		return nil, fmt.Errorf("snapd: cannot fetch serial assertion: %w", err)
 	}
 	if err == nil {
 		a.Serial = headers["serial"]
@@ -288,7 +288,7 @@ func (c *RealClient) GetAssertions(ctx context.Context) (*Assertions, error) {
 
 	model, brand, err := c.fetchModelAssertion(ctx)
 	if err != nil && !errors.Is(err, errNotFound) {
-		return nil, fmt.Errorf("snapd: fetching model assertion: %w", err)
+		return nil, fmt.Errorf("snapd: cannot fetch model assertion: %w", err)
 	}
 	if err == nil {
 		a.Model = model
@@ -382,7 +382,7 @@ func (c *RealClient) GetRebootRequired(ctx context.Context) (bool, error) {
 	}
 	var info systemInfoResult
 	if err := json.Unmarshal(sr.Result, &info); err != nil {
-		return false, fmt.Errorf("snapd: parsing system-info: %w", err)
+		return false, fmt.Errorf("snapd: cannot parse system-info: %w", err)
 	}
 	return info.Refresh.Pending == "restart", nil
 }

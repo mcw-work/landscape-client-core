@@ -109,7 +109,7 @@ func (p *UserMonitor) parsePasswd() (map[string]userRecord, error) {
 	users := make(map[string]userRecord)
 	f, err := os.Open(p.passwdPath)
 	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", p.passwdPath, err)
+		return nil, fmt.Errorf("cannot open %s: %w", p.passwdPath, err)
 	}
 	defer func() {
 		_ = f.Close()
@@ -167,7 +167,7 @@ func (p *UserMonitor) parseGroup(users map[string]userRecord) (map[string]groupR
 	groups := make(map[string]groupRecord)
 	f, err := os.Open(p.groupPath)
 	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", p.groupPath, err)
+		return nil, fmt.Errorf("cannot open %s: %w", p.groupPath, err)
 	}
 	defer func() {
 		_ = f.Close()

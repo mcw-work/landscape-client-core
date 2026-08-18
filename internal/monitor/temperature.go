@@ -75,7 +75,7 @@ func (p *Temperature) readZones() (map[string]float64, error) {
 	pattern := filepath.Join(p.sysfsPath, "thermal_zone*")
 	dirs, err := filepath.Glob(pattern)
 	if err != nil {
-		return nil, fmt.Errorf("globbing %s: %w", pattern, err)
+		return nil, fmt.Errorf("cannot glob %s: %w", pattern, err)
 	}
 	zones := make(map[string]float64, len(dirs))
 	for _, dir := range dirs {

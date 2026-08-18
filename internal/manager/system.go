@@ -38,7 +38,7 @@ func dbusShutdown(ctx context.Context, reboot bool) error {
 	// godbus v5.2.2 has no ConnectSystemBusWithContext; WithContext binds ctx to the conn.
 	conn, err := dbus.ConnectSystemBus(dbus.WithContext(ctx))
 	if err != nil {
-		return fmt.Errorf("connecting to system bus: %w", err)
+		return fmt.Errorf("cannot connect to system bus: %w", err)
 	}
 	defer func() {
 		_ = conn.Close()

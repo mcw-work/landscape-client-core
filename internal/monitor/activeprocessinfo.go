@@ -83,11 +83,11 @@ func (p *ActiveProcessInfo) Run(ctx context.Context, sink exchange.MessageSink, 
 func (p *ActiveProcessInfo) buildMessage() (exchange.Message, error) {
 	bootTime, err := p.readBootTime()
 	if err != nil {
-		return nil, fmt.Errorf("reading boot time: %w", err)
+		return nil, fmt.Errorf("cannot read boot time: %w", err)
 	}
 	uptime, err := p.readUptime()
 	if err != nil {
-		return nil, fmt.Errorf("reading uptime: %w", err)
+		return nil, fmt.Errorf("cannot read uptime: %w", err)
 	}
 	// Fill scratch this tick, then swap it with previous so next tick reuses the
 	// old map via clear() instead of allocating. previous still holds last tick's
@@ -98,7 +98,7 @@ func (p *ActiveProcessInfo) buildMessage() (exchange.Message, error) {
 		clear(p.scratch)
 	}
 	if err := p.readAllProcessesInto(p.scratch, bootTime, uptime); err != nil {
-		return nil, fmt.Errorf("reading processes: %w", err)
+		return nil, fmt.Errorf("cannot read processes: %w", err)
 	}
 	current := p.scratch
 
@@ -153,7 +153,7 @@ func (p *ActiveProcessInfo) buildMessage() (exchange.Message, error) {
 func (p *ActiveProcessInfo) readBootTime() (int64, error) {
 	f, err := os.Open(filepath.Join(p.procRoot, "stat"))
 	if err != nil {
-		return 0, fmt.Errorf("opening proc/stat: %w", err)
+		return 0, fmt.Errorf("cannot open proc/stat: %w", err)
 	}
 	defer func() {
 		_ = f.Close()
@@ -169,13 +169,13 @@ func (p *ActiveProcessInfo) readBootTime() (int64, error) {
 			}
 			t, err := strconv.ParseInt(fields[1], 10, 64)
 			if err != nil {
-				return 0, fmt.Errorf("parsing btime: %w", err)
+				return 0, fmt.Errorf("cannot parse btime: %w", err)
 			}
 			return t, nil
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return 0, fmt.Errorf("scanning proc/stat: %w", err)
+		return 0, fmt.Errorf("cannot scan proc/stat: %w", err)
 	}
 	return 0, fmt.Errorf("btime not found in proc/stat")
 }
@@ -184,7 +184,7 @@ func (p *ActiveProcessInfo) readBootTime() (int64, error) {
 func (p *ActiveProcessInfo) readUptime() (float64, error) {
 	data, err := os.ReadFile(filepath.Join(p.procRoot, "uptime"))
 	if err != nil {
-		return 0, fmt.Errorf("reading proc/uptime: %w", err)
+		return 0, fmt.Errorf("cannot read proc/uptime: %w", err)
 	}
 	fields := strings.Fields(string(data))
 	if len(fields) < 1 {
@@ -192,7 +192,7 @@ func (p *ActiveProcessInfo) readUptime() (float64, error) {
 	}
 	uptime, err := strconv.ParseFloat(fields[0], 64)
 	if err != nil {
-		return 0, fmt.Errorf("parsing uptime: %w", err)
+		return 0, fmt.Errorf("cannot parse uptime: %w", err)
 	}
 	return uptime, nil
 }
@@ -204,7 +204,7 @@ func (p *ActiveProcessInfo) readUptime() (float64, error) {
 func (p *ActiveProcessInfo) readAllProcessesInto(dst map[int64]processInfo, bootTime int64, uptime float64) error {
 	entries, err := os.ReadDir(p.procRoot)
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", p.procRoot, err)
+		return fmt.Errorf("cannot read %s: %w", p.procRoot, err)
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -267,19 +267,19 @@ func (p *ActiveProcessInfo) readProcessInfo(pid int64, bootTime int64, uptime fl
 	// started at boot time.
 	utime, err := strconv.ParseInt(rest[11], 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("parsing utime for pid %d: %w", pid, err)
+		return nil, fmt.Errorf("cannot parse utime for pid %d: %w", pid, err)
 	}
 	stime, err := strconv.ParseInt(rest[12], 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("parsing stime for pid %d: %w", pid, err)
+		return nil, fmt.Errorf("cannot parse stime for pid %d: %w", pid, err)
 	}
 	startJiffies, err := strconv.ParseInt(rest[19], 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("parsing starttime for pid %d: %w", pid, err)
+		return nil, fmt.Errorf("cannot parse starttime for pid %d: %w", pid, err)
 	}
 	vsize, err := strconv.ParseInt(rest[20], 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("parsing vsize for pid %d: %w", pid, err)
+		return nil, fmt.Errorf("cannot parse vsize for pid %d: %w", pid, err)
 	}
 
 	startTimeSec := bootTime + startJiffies/clkTck
