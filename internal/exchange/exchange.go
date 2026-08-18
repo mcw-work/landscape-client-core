@@ -124,7 +124,7 @@ func (e *Exchange) Run(ctx context.Context) error {
 			log.Printf("exchange: exchange failed: %v", err)
 		}
 		e.mu.Lock()
-		hasPending := len(e.pending) > 0
+		hasUrgent := e.hasUrgentPendingLocked()
 		e.mu.Unlock()
 
 		justRegistered := prevSecureID == "" && state.SecureID != ""
@@ -133,7 +133,7 @@ func (e *Exchange) Run(ctx context.Context) error {
 		// polls quickly after the server processes the registration request.
 		// Also use urgent interval immediately after registration so device
 		// info is delivered without waiting 15 minutes.
-		if hasPending || state.SecureID == "" || justRegistered {
+		if hasUrgent || state.SecureID == "" || justRegistered {
 			interval = e.cfg.UrgentExchangeInterval
 		}
 
@@ -165,10 +165,38 @@ func (e *Exchange) Run(ctx context.Context) error {
 	}
 }
 
-// Send enqueues a message for the next exchange and wakes the exchange loop
-// so the message is delivered promptly rather than waiting for the next timer tick.
-// Safe to call from multiple goroutines.
+// isUrgentType reports whether a message must not wait for the next scheduled
+// exchange. The server blocks on operation results.
+func isUrgentType(msgType string) bool {
+	return msgType == "operation-result"
+}
+
+// hasUrgentPendingLocked reports whether the queue holds a message that should
+// shorten the next exchange interval. Caller must hold e.mu.
+func (e *Exchange) hasUrgentPendingLocked() bool {
+	for _, m := range e.pending {
+		t, _ := m["type"].(string)
+		if isUrgentType(t) {
+			return true
+		}
+	}
+	return false
+}
+
+// Send enqueues a message for the next scheduled exchange. It does NOT wake the
+// exchange loop: plugin telemetry that triggered an exchange per message made
+// exchange-interval meaningless — measured 60x the configured rate on a device
+// with memory-info at 15s. Matches Python's send_message(urgent=False) default.
 func (e *Exchange) Send(_ context.Context, msg Message) error {
+	e.mu.Lock()
+	e.pending = append(e.pending, msg)
+	e.mu.Unlock()
+	return nil
+}
+
+// SendUrgent enqueues a message and wakes the exchange loop immediately. Use it
+// only for messages the server is waiting on, such as operation results.
+func (e *Exchange) SendUrgent(_ context.Context, msg Message) error {
 	e.mu.Lock()
 	e.pending = append(e.pending, msg)
 	e.mu.Unlock()
@@ -197,7 +225,7 @@ func (e *Exchange) sendOperationResult(ctx context.Context, operationID int64, s
 	if resultCode != nil {
 		msg["result-code"] = *resultCode
 	}
-	return e.Send(ctx, msg)
+	return e.SendUrgent(ctx, msg)
 }
 
 // SendResult enqueues an operation-result message.
