@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -18,7 +17,6 @@ import (
 	"github.com/canonical/landscape-client-core/internal/config"
 	"github.com/canonical/landscape-client-core/internal/persist"
 	"github.com/canonical/landscape-client-core/internal/transport"
-	"golang.org/x/sync/errgroup"
 )
 
 const apiVersion = "3.3"
@@ -63,6 +61,11 @@ type Exchange struct {
 	handlers   map[string][]func(ctx context.Context, msg Message)
 	insecureID string        // guarded by mu; updated from set-id messages
 	wake       chan struct{} // buffered(1); written by TriggerExchange
+	// dispatchCtx is the daemon-lifetime context used to run inbound message
+	// handlers. Handler lifetime must not be tied to the exchange cycle:
+	// manager.Runner dispatches into a goroutine and returns immediately, so a
+	// per-exchange context would be cancelled while the operation is still running.
+	dispatchCtx context.Context
 }
 
 // New creates an Exchange.
@@ -112,6 +115,7 @@ func (e *Exchange) Run(ctx context.Context) error {
 	// immediately (i.e. if already registered from a previous run).
 	e.mu.Lock()
 	e.insecureID = state.InsecureID
+	e.dispatchCtx = ctx
 	e.mu.Unlock()
 
 	for {
@@ -398,7 +402,13 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	}
 
 	// Process inbound messages: special types are handled here; others go to subscribers.
-	handlerEG, handlerCtx := errgroup.WithContext(ctx)
+	e.mu.Lock()
+	handlerCtx := e.dispatchCtx
+	e.mu.Unlock()
+	if handlerCtx == nil {
+		// performExchange called outside Run (tests, final drain).
+		handlerCtx = context.Background()
+	}
 	for _, msg := range inbound {
 		msgType, _ := msg["type"].(string)
 
@@ -492,29 +502,16 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			for _, h := range handlers {
 				h := h
 				msg := msg
-				handlerEG.Go(func() (handlerErr error) {
+				go func() {
 					defer func() {
 						if rec := recover(); rec != nil {
 							log.Printf("exchange: handler panic type=%q: %v\n%s", msgType, rec, debug.Stack())
-							handlerErr = fmt.Errorf("handler panic for %q: %v", msgType, rec)
 						}
 					}()
 					h(handlerCtx, msg)
-					if err := handlerCtx.Err(); err != nil {
-						handlerErr = fmt.Errorf("handler for %q stopped: %w", msgType, err)
-					}
-					return handlerErr
-				})
+				}()
 			}
 		}
-	}
-	if err := handlerEG.Wait(); err != nil {
-		if errors.Is(err, context.Canceled) {
-			log.Printf("exchange: handler group canceled: %v", err)
-		} else {
-			log.Printf("exchange: handler group error: %v", err)
-		}
-		return fmt.Errorf("exchange: waiting for handlers: %w", err)
 	}
 
 	// Persist updated state via a serialized read-modify-write, preserving any

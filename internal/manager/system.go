@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -256,6 +257,16 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 	// Run the script.
 	log.Printf("execute-script: op=%d interpreter=%q script=%q time-limit=%d", opID, interpreter, scriptPath, timeLimit)
 	cmd := exec.CommandContext(execCtx, interpreterBin, append(interpreterArgs, scriptPath)...)
+	// Run the script in its own process group so a timeout kills grandchildren
+	// too. Without this they survive as orphans holding the stdout pipe, which
+	// blocks cmd.Wait indefinitely — the pipe exists because Stdout is an
+	// io.Writer rather than an *os.File.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	// Bound Wait even if something still holds the pipe open.
+	cmd.WaitDelay = 5 * time.Second
 	if len(cmdEnv) > 0 {
 		cmd.Env = cmdEnv
 	}
@@ -265,6 +276,15 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 	cmd.Stderr = lw
 
 	runErr := cmd.Run()
+	// Reap the whole process group. cmd.Cancel and WaitDelay only target the
+	// direct child, and os/exec's context watcher stops once the leader is
+	// reaped — so a script that backgrounds a process and exits immediately
+	// (e.g. "sleep 30 &") leaves that grandchild orphaned, holding the snap's
+	// descriptors. Signalling the negative pgid sweeps any survivor. ESRCH
+	// (group already gone) is expected and ignored.
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	// Sanitize output to valid UTF-8, replacing invalid bytes with the Unicode
 	// replacement character — matching the Python client's
 	// data.decode("utf-8", "replace") behaviour. This ensures the bpickle u-type

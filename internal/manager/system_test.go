@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
 	"github.com/canonical/landscape-client-core/internal/manager"
@@ -396,6 +397,82 @@ func TestScriptExecHandler_TimeoutResultCode(t *testing.T) {
 	}
 	if call.resultCode != 102 {
 		t.Errorf("resultCode = %d, want 102 (timeout)", call.resultCode)
+	}
+}
+
+// TestScriptExec_TimeLimitKillsProcessGroup asserts a script that spawns a
+// background child cannot outlive its time-limit. exec.CommandContext alone
+// kills only the direct child, and the surviving child holds the stdout pipe
+// open, which blocks cmd.Run well past the deadline. The backgrounded child
+// also leaves no orphan: it would touch a marker file after the WaitDelay if it
+// survived, so the marker's absence proves the process group was reaped.
+func TestScriptExec_TimeLimitKillsProcessGroup(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "orphan-marker")
+	h := manager.NewScriptExecHandler(dir, nil)
+	sink := &mockResultSink{}
+
+	msg := exchange.Message{
+		"type":         "execute-script",
+		"operation-id": int64(1),
+		"code":         "(sleep 7; touch " + marker + ") & echo started\n",
+		"interpreter":  "/bin/sh",
+		"time-limit":   int64(1),
+	}
+
+	start := time.Now()
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	if elapsed > 10*time.Second {
+		t.Fatalf("time-limit not enforced: Handle took %v for a 1s limit", elapsed)
+	}
+
+	if len(sink.calls) != 1 {
+		t.Fatalf("want 1 result, got %d", len(sink.calls))
+	}
+	if sink.calls[0].resultCode != 102 {
+		t.Errorf("result-code: want 102 (timeout), got %d", sink.calls[0].resultCode)
+	}
+
+	// Wait past the child's 7s touch to prove it was killed with its group,
+	// not merely detached from the reaped shell.
+	for time.Since(start) < 9*time.Second {
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatal("orphaned background child survived the time-limit: it created its marker after the process group should have been reaped")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// TestScriptExec_TimeLimitPreservesPartialOutput guards behaviour that is
+// already correct and must not regress.
+func TestScriptExec_TimeLimitPreservesPartialOutput(t *testing.T) {
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+	sink := &mockResultSink{}
+
+	msg := exchange.Message{
+		"type":         "execute-script",
+		"operation-id": int64(2),
+		"code":         "echo before-timeout; sleep 30\n",
+		"interpreter":  "/bin/sh",
+		"time-limit":   int64(1),
+	}
+
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(sink.calls) != 1 {
+		t.Fatalf("want 1 result, got %d", len(sink.calls))
+	}
+	if sink.calls[0].resultCode != 102 {
+		t.Errorf("result-code: want 102, got %d", sink.calls[0].resultCode)
+	}
+	if !strings.Contains(sink.calls[0].output, "before-timeout") {
+		t.Errorf("partial output lost: got %q", sink.calls[0].output)
 	}
 }
 

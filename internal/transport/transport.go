@@ -21,7 +21,9 @@ const (
 
 	// maxResponseBytes caps successful response bodies to prevent a
 	// misbehaving or compromised server from exhausting process memory.
-	maxResponseBytes = 32 * 1024 * 1024 // 32 MiB
+	// 32 MiB was far above any legitimate payload; 4 MiB also bounds the
+	// input the bpickle decoder can be asked to walk.
+	maxResponseBytes = 4 * 1024 * 1024 // 4 MiB
 )
 
 // Config configures a transport Client.

@@ -629,6 +629,84 @@ func TestNetworkDevice_DataWatcherChange(t *testing.T) {
 	}
 }
 
+// TestNetworkDevice_SendsKernelIFFFlags asserts the wire value is the kernel's
+// IFF_* bitmask, not Go's net.Flags. Ported from the Python client's
+// test_networkdevice.py, which asserts flags&1 (UP), flags&8 (LOOPBACK) and
+// flags&64 (RUNNING).
+func TestNetworkDevice_SendsKernelIFFFlags(t *testing.T) {
+	dir := t.TempDir()
+	p, _ := makeNetMock(t, dir)
+
+	// 0x1043 = IFF_UP|IFF_BROADCAST|IFF_RUNNING|IFF_MULTICAST = 1|2|64|4096.
+	writeFixture(t, filepath.Join(dir, "eth0", "flags"), "0x1043\n")
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+
+	msgs := waitForMessages(t, sink, 1, 500*time.Millisecond)
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	devices := msgs[0]["devices"].([]map[string]any)
+	flags, ok := devices[0]["flags"].(int)
+	if !ok {
+		t.Fatalf("flags: want int, got %T", devices[0]["flags"])
+	}
+
+	if flags != 0x1043 {
+		t.Errorf("flags: want 4163 (0x1043), got %d", flags)
+	}
+	if flags&1 == 0 {
+		t.Error("IFF_UP (&1) not set")
+	}
+	if flags&64 == 0 {
+		t.Error("IFF_RUNNING (&64) not set — this is the bit Go's net.Flags never sets correctly")
+	}
+	if flags&4096 == 0 {
+		t.Error("IFF_MULTICAST (&4096) not set")
+	}
+	if flags&8 != 0 {
+		t.Error("IFF_LOOPBACK (&8) set for a non-loopback interface")
+	}
+}
+
+// TestNetworkDevice_FlagsFallback asserts that when sysfs has no flags file the
+// interface is still reported, with net.Flags translated into IFF_* positions,
+// rather than dropped from inventory.
+func TestNetworkDevice_FlagsFallback(t *testing.T) {
+	dir := t.TempDir()
+	p, _ := makeNetMock(t, dir) // makeNetMock writes no flags file
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+
+	msgs := waitForMessages(t, sink, 1, 500*time.Millisecond)
+	cancel()
+	<-errCh
+
+	devices := msgs[0]["devices"].([]map[string]any)
+	if len(devices) != 1 {
+		t.Fatalf("device dropped when flags file is missing: got %d devices", len(devices))
+	}
+	flags := devices[0]["flags"].(int)
+	if flags&1 == 0 {
+		t.Error("IFF_UP (&1) not set in fallback translation")
+	}
+	if flags&2 == 0 {
+		t.Error("IFF_BROADCAST (&2) not set in fallback translation")
+	}
+}
+
 // ─── MountInfo tests ───────────────────────────────────────────────────────
 
 func makeMockStatvfs(totalMB, freeMB int64) func(string) (syscall.Statfs_t, error) {
