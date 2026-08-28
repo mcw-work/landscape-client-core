@@ -280,10 +280,12 @@ func TestWaitForChange_Done(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := callCount.Add(1)
 		status := "Doing"
+		ready := false
 		if n >= 3 {
 			status = "Done"
+			ready = true
 		}
-		result := map[string]any{"status": status}
+		result := map[string]any{"status": status, "ready": ready}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(syncResponse(result))
 	})
@@ -294,17 +296,18 @@ func TestWaitForChange_Done(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WaitForChange: %v", err)
 	}
-	if n := callCount.Load(); n < 3 {
-		t.Errorf("expected at least 3 polls, got %d", n)
+	if n := callCount.Load(); n != 3 {
+		t.Errorf("expected 3 polls, got %d", n)
 	}
 }
 
-// Test 10: WaitForChange returns error when status is "Error".
-func TestWaitForChange_Error(t *testing.T) {
+// Test 10: WaitForChange returns snapd's change error string.
+func TestWaitForChange_ErrorString(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		result := map[string]any{
 			"status": "Error",
-			"err":    map[string]string{"message": "something went wrong"},
+			"ready":  true,
+			"err":    "something went wrong",
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(syncResponse(result))
@@ -318,6 +321,30 @@ func TestWaitForChange_Error(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "something went wrong") {
 		t.Errorf("error %q does not contain expected message", err.Error())
+	}
+}
+
+func TestWaitForChange_ReadyNonSuccessIsError(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		result := map[string]any{"status": "Hold", "ready": true}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(syncResponse(result))
+	})
+	_, socketPath := startUnixServer(t, handler)
+	client := snapd.New(socketPath)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	err := client.WaitForChange(ctx, "change-hold")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "change-hold") {
+		t.Errorf("error %q does not contain change ID", err.Error())
+	}
+	if !strings.Contains(err.Error(), "status Hold") {
+		t.Errorf("error %q does not contain expected status", err.Error())
 	}
 }
 
@@ -421,31 +448,40 @@ func TestContextCancellation(t *testing.T) {
 	}
 }
 
-// Test 15: WaitForChange returns promptly with context error when context is cancelled during sleep.
+// Test 15: WaitForChange returns promptly when cancelled during its retry wait.
 func TestWaitForChange_ContextCancel(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		result := map[string]any{"status": "Doing"}
+		result := map[string]any{"status": "Doing", "ready": false}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(syncResponse(result))
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
+	retryWaitStarted := make(chan struct{}, 1)
+	snapd.NotifyWhenRetryWaitStarts(client, retryWaitStarted)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	start := time.Now()
-	err := client.WaitForChange(ctx, "change-cancel")
-	elapsed := time.Since(start)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- client.WaitForChange(ctx, "change-cancel")
+	}()
 
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	select {
+	case <-retryWaitStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for client retry wait")
 	}
-	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context error, got %v", err)
-	}
-	if elapsed > 600*time.Millisecond {
-		t.Errorf("WaitForChange took too long: %v", elapsed)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("WaitForChange did not return promptly after cancellation")
 	}
 }
 
