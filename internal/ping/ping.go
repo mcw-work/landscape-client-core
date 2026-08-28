@@ -30,6 +30,28 @@ type Pinger struct {
 	interval atomic.Value
 }
 
+type pingTimer interface {
+	Chan() <-chan time.Time
+	Reset(time.Duration) bool
+	Stop() bool
+}
+
+type systemTimer struct {
+	timer *time.Timer
+}
+
+func (t *systemTimer) Chan() <-chan time.Time {
+	return t.timer.C
+}
+
+func (t *systemTimer) Reset(interval time.Duration) bool {
+	return t.timer.Reset(interval)
+}
+
+func (t *systemTimer) Stop() bool {
+	return t.timer.Stop()
+}
+
 // New returns a Pinger.
 //
 //   - pingURL: the URL to POST to (e.g. http://landscape.canonical.com/ping).
@@ -68,13 +90,13 @@ func (p *Pinger) GetInterval() time.Duration {
 
 // Run starts the ping loop. Blocks until ctx is cancelled, then returns nil.
 func (p *Pinger) Run(ctx context.Context) error {
-	for {
-		interval := p.GetInterval()
+	timer := &systemTimer{timer: time.NewTimer(0)}
+	timer.Stop()
+	defer timer.Stop()
 
-		select {
-		case <-ctx.Done():
+	for {
+		if !p.wait(ctx, timer) {
 			return nil
-		case <-time.After(interval):
 		}
 
 		insecureID := p.getInsecureID()
@@ -92,6 +114,16 @@ func (p *Pinger) Run(ctx context.Context) error {
 			slog.Debug("ping: server has messages waiting, triggering urgent exchange")
 			p.triggerExchange()
 		}
+	}
+}
+
+func (p *Pinger) wait(ctx context.Context, timer pingTimer) bool {
+	timer.Reset(p.GetInterval())
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.Chan():
+		return true
 	}
 }
 
