@@ -35,6 +35,12 @@ Guidelines:
 - Do not store contexts on structs for long-term reuse.
 - Derive child contexts close to the operation that needs them.
 
+## Inbound Dispatch Ownership
+
+Exchange invokes subscriber callbacks synchronously and in server-message order. Callbacks must return promptly or hand work to an owner that bounds its concurrency.
+
+The manager Runner acquires a weighted semaphore before handing off operation work, then tracks that work with a WaitGroup through shutdown. Exchange persists inbound sequence state after callback handoff and does not add a second queue between receipt and the bounded owner.
+
 ## Semaphore Bounding (Plan 1)
 
 Handler execution can be bounded with a semaphore to prevent unbounded goroutine growth under bursty inbound traffic.

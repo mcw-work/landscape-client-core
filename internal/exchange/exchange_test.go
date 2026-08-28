@@ -1,10 +1,13 @@
 package exchange
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -682,9 +685,12 @@ func TestPerformExchange_HandlerPanicIsContained(t *testing.T) {
 	state := ts.freshState(t)
 	state.SecureID = "sec123"
 
-	panicked := make(chan struct{})
+	var logOutput bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logOutput, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
 	ts.ex.Subscribe("boom", func(ctx context.Context, msg Message) {
-		defer close(panicked)
 		panic("boom")
 	})
 
@@ -695,61 +701,109 @@ func TestPerformExchange_HandlerPanicIsContained(t *testing.T) {
 		"next-expected-sequence": int64(0),
 	})
 
-	// Handlers are dispatched fire-and-forget: a panicking handler is recovered
-	// inside its own goroutine and must not fail the exchange.
 	if err := ts.ex.performExchange(context.Background(), state); err != nil {
 		t.Fatalf("performExchange must not fail because a handler panicked: %v", err)
 	}
-	select {
-	case <-panicked:
-	case <-time.After(time.Second):
-		t.Fatal("handler was never dispatched")
+	if got := logOutput.String(); !strings.Contains(got, "exchange: handler panicked") || !strings.Contains(got, "panic=boom") {
+		t.Fatalf("handler panic was not logged: %q", got)
 	}
 }
 
-func TestPerformExchange_DoesNotWaitForHandlers(t *testing.T) {
+func TestPerformExchange_InvokesSubscribersSequentially(t *testing.T) {
 	ts := newTestSetup(t)
 	state := ts.freshState(t)
 	state.SecureID = "sec123"
 
-	done := make(chan struct{})
-	ts.ex.Subscribe("fanout", func(ctx context.Context, msg Message) {
-		time.Sleep(300 * time.Millisecond)
-		close(done)
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondStarted := make(chan struct{})
+	ts.ex.Subscribe("first", func(ctx context.Context, msg Message) {
+		close(firstStarted)
+		<-releaseFirst
+	})
+	ts.ex.Subscribe("second", func(ctx context.Context, msg Message) {
+		close(secondStarted)
 	})
 
 	ts.fs.push(map[string]any{
 		"messages": []any{
-			map[string]any{"type": "fanout"},
+			map[string]any{"type": "first"},
+			map[string]any{"type": "second"},
 		},
 		"next-expected-sequence": int64(0),
 	})
 
-	// performExchange must return promptly without blocking on the handler;
-	// tying handler lifetime to the exchange cycle was the P0 defect.
-	start := time.Now()
-	if err := ts.ex.performExchange(context.Background(), state); err != nil {
-		t.Fatalf("performExchange: %v", err)
-	}
-	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
-		t.Fatalf("performExchange waited for the handler (%v); dispatch must be fire-and-forget", elapsed)
-	}
-	// The handler still runs to completion in the background.
+	exchangeDone := make(chan error, 1)
+	go func() {
+		exchangeDone <- ts.ex.performExchange(context.Background(), state)
+	}()
+
 	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("handler never completed")
+	case <-firstStarted:
+	case err := <-exchangeDone:
+		close(releaseFirst)
+		t.Fatalf("performExchange returned before the first callback started: %v", err)
+	case <-time.After(time.Second):
+		close(releaseFirst)
+		select {
+		case <-exchangeDone:
+		case <-time.After(time.Second):
+		}
+		t.Fatal("first callback did not start")
+	}
+
+	select {
+	case <-secondStarted:
+		close(releaseFirst)
+		select {
+		case <-exchangeDone:
+		case <-time.After(time.Second):
+			t.Fatal("performExchange did not return after releasing the first callback")
+		}
+		t.Fatal("second callback started before the first callback returned")
+	case err := <-exchangeDone:
+		close(releaseFirst)
+		t.Fatalf("performExchange returned while the first callback was blocked: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(releaseFirst)
+
+	select {
+	case <-secondStarted:
+	case <-time.After(time.Second):
+		t.Fatal("second callback did not start after the first callback returned")
+	}
+
+	select {
+	case err := <-exchangeDone:
+		if err != nil {
+			t.Fatalf("performExchange: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("performExchange did not return")
 	}
 }
 
-func TestPerformExchange_HandlerDispatchDoesNotFailExchange(t *testing.T) {
+func TestPerformExchange_HandlerContextUsesDaemonLifetime(t *testing.T) {
+	type daemonSentinelKey struct{}
+	type requestSentinelKey struct{}
+
 	ts := newTestSetup(t)
 	state := ts.freshState(t)
 	state.SecureID = "sec123"
 
-	ran := make(chan struct{})
+	daemonCtx := context.WithValue(context.Background(), daemonSentinelKey{}, "daemon")
+	ts.ex.mu.Lock()
+	ts.ex.dispatchCtx = daemonCtx
+	ts.ex.mu.Unlock()
+
+	requestCtx, cancelRequest := context.WithCancel(context.WithValue(context.Background(), requestSentinelKey{}, "request"))
+	defer cancelRequest()
+
+	var callbackCtx context.Context
 	ts.ex.Subscribe("cancel-me", func(handlerCtx context.Context, msg Message) {
-		close(ran)
+		callbackCtx = handlerCtx
 	})
 
 	ts.fs.push(map[string]any{
@@ -759,15 +813,22 @@ func TestPerformExchange_HandlerDispatchDoesNotFailExchange(t *testing.T) {
 		"next-expected-sequence": int64(0),
 	})
 
-	// Handlers are fire-and-forget, so nothing a handler does — including its
-	// context ending — propagates back as an exchange error.
-	if err := ts.ex.performExchange(context.Background(), state); err != nil {
-		t.Fatalf("performExchange must not fail due to handler dispatch: %v", err)
+	err := ts.ex.performExchange(requestCtx, state)
+	cancelRequest()
+	if err != nil {
+		t.Fatalf("performExchange: %v", err)
 	}
-	select {
-	case <-ran:
-	case <-time.After(time.Second):
-		t.Fatal("handler was never dispatched")
+	if callbackCtx == nil {
+		t.Fatal("handler was not invoked before performExchange returned")
+	}
+	if got := callbackCtx.Value(daemonSentinelKey{}); got != "daemon" {
+		t.Errorf("daemon context sentinel = %v, want daemon", got)
+	}
+	if got := callbackCtx.Value(requestSentinelKey{}); got != nil {
+		t.Errorf("request context sentinel = %v, want nil", got)
+	}
+	if err := callbackCtx.Err(); err != nil {
+		t.Errorf("handler context was cancelled with request context: %v", err)
 	}
 }
 
