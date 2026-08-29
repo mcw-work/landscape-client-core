@@ -35,6 +35,119 @@ func newTransport(t *testing.T) *transport.Client {
 	return tc
 }
 
+func receiveWithin[T any](t *testing.T, ch <-chan T) T {
+	t.Helper()
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for channel")
+		var zero T
+		return zero
+	}
+}
+
+func assertNoReceiveWithin[T any](t *testing.T, ch <-chan T) {
+	t.Helper()
+	select {
+	case value := <-ch:
+		t.Fatalf("unexpected channel value: %v", value)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+type fakePingTimer struct {
+	ch     chan time.Time
+	resets chan time.Duration
+}
+
+func newFakePingTimer() *fakePingTimer {
+	return &fakePingTimer{
+		ch:     make(chan time.Time, 1),
+		resets: make(chan time.Duration, 1),
+	}
+}
+
+func (t *fakePingTimer) Chan() <-chan time.Time {
+	return t.ch
+}
+
+func (t *fakePingTimer) Reset(interval time.Duration) bool {
+	t.resets <- interval
+	return false
+}
+
+func (t *fakePingTimer) Stop() bool {
+	return false
+}
+
+func (t *fakePingTimer) fire() {
+	t.ch <- time.Time{}
+}
+
+func TestPinger_WaitCancelsWhileTimerArmed(t *testing.T) {
+	const interval = time.Hour
+
+	p := New("", func() string { return "" }, func() {}, interval, newTransport(t))
+	timer := newFakePingTimer()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	waitResult := make(chan bool, 1)
+
+	go func() {
+		waitResult <- p.wait(ctx, timer)
+	}()
+
+	if got := receiveWithin(t, timer.resets); got != interval {
+		t.Fatalf("Reset interval: want %v, got %v", interval, got)
+	}
+	cancel()
+	if receiveWithin(t, waitResult) {
+		t.Fatal("wait returned true after context cancellation")
+	}
+}
+
+func TestPinger_SetIntervalAffectsNextArm(t *testing.T) {
+	const (
+		originalInterval = time.Hour
+		newInterval      = 2 * time.Hour
+	)
+
+	p := New("", func() string { return "" }, func() {}, originalInterval, newTransport(t))
+	timer := newFakePingTimer()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	firstWait := make(chan bool, 1)
+	go func() {
+		firstWait <- p.wait(ctx, timer)
+	}()
+
+	if got := receiveWithin(t, timer.resets); got != originalInterval {
+		t.Fatalf("first Reset interval: want %v, got %v", originalInterval, got)
+	}
+
+	p.SetInterval(newInterval)
+	assertNoReceiveWithin(t, firstWait)
+	timer.fire()
+	if !receiveWithin(t, firstWait) {
+		t.Fatal("first wait returned false after the timer fired")
+	}
+
+	secondWait := make(chan bool, 1)
+	go func() {
+		secondWait <- p.wait(ctx, timer)
+	}()
+
+	if got := receiveWithin(t, timer.resets); got != newInterval {
+		t.Fatalf("second Reset interval: want %v, got %v", newInterval, got)
+	}
+	timer.fire()
+	if !receiveWithin(t, secondWait) {
+		t.Fatal("second wait returned false after the timer fired")
+	}
+}
+
 // TestPing_TriggersExchangeWhenMessagesTrue verifies that doPing returns true
 // and TriggerExchange is called when the server says messages=True.
 func TestPing_TriggersExchangeWhenMessagesTrue(t *testing.T) {

@@ -226,7 +226,7 @@ func (p *ActiveProcessInfo) readAllProcessesInto(dst map[int64]processInfo, boot
 	return nil
 }
 
-// clkTck is the kernel timer frequency; 100 Hz is universal on modern Linux.
+// clkTck is Linux USER_HZ for /proc process accounting, independent of CONFIG_HZ.
 const clkTck = 100
 
 // readProcessInfo parses /proc/<pid>/stat and /proc/<pid>/status to build a

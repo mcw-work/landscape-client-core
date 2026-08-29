@@ -377,6 +377,15 @@ func (e *Exchange) SendResultCode(ctx context.Context, operationID int64, status
 	return e.sendOperationResult(ctx, operationID, status, &resultCode, output)
 }
 
+func (e *Exchange) invokeHandler(ctx context.Context, messageType string, handler func(ctx context.Context, msg Message), msg Message) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Error("exchange: handler panicked", "type", messageType, "panic", rec, "stack", string(debug.Stack()))
+		}
+	}()
+	handler(ctx, msg)
+}
+
 // performExchange executes a single exchange with the Landscape server.
 func (e *Exchange) performExchange(ctx context.Context, state *persist.State) error {
 	// Inject a registration message at the front of the queue if not yet registered.
@@ -671,15 +680,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 				continue
 			}
 			for _, h := range handlers {
-				msg := msg
-				go func() {
-					defer func() {
-						if rec := recover(); rec != nil {
-							slog.Error("exchange: handler panicked", "type", msgType, "panic", rec, "stack", string(debug.Stack()))
-						}
-					}()
-					h(handlerCtx, msg)
-				}()
+				e.invokeHandler(handlerCtx, msgType, h, msg)
 			}
 		}
 	}

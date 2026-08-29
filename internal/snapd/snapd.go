@@ -78,8 +78,9 @@ type snapdError struct {
 
 // RealClient is a Client connected to the snapd Unix socket.
 type RealClient struct {
-	http    *http.Client
-	baseURL string
+	http      *http.Client
+	baseURL   string
+	retryWait func(context.Context, *time.Timer) error
 }
 
 // New returns a Client connected to the given Unix socket path.
@@ -94,8 +95,9 @@ func New(socketPath string) Client {
 	return &RealClient{
 		// snapd change operations are polled separately via WaitForChange, so no
 		// single request should take this long.
-		http:    &http.Client{Transport: transport, Timeout: 60 * time.Second},
-		baseURL: "http://localhost/v2",
+		http:      &http.Client{Transport: transport, Timeout: 60 * time.Second},
+		baseURL:   "http://localhost/v2",
+		retryWait: waitForRetry,
 	}
 }
 
@@ -235,13 +237,33 @@ func (c *RealClient) RestartService(ctx context.Context, snapName, serviceName s
 // changeResult is the result payload from GET /v2/changes/<id>.
 type changeResult struct {
 	Status string `json:"status"`
-	Err    *struct {
-		Message string `json:"message"`
-	} `json:"err"`
+	Ready  bool   `json:"ready"`
+	Err    string `json:"err"`
 }
 
-// WaitForChange polls until the change reaches "Done" or "Error".
+const changeRetryDelay = 500 * time.Millisecond
+
+func waitForRetry(ctx context.Context, timer *time.Timer) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// WaitForChange polls until the change is ready.
 func (c *RealClient) WaitForChange(ctx context.Context, changeID string) error {
+	timer := time.NewTimer(changeRetryDelay)
+	defer func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	}()
+
 	for {
 		sr, err := c.get(ctx, "/changes/"+changeID)
 		if err != nil {
@@ -251,20 +273,24 @@ func (c *RealClient) WaitForChange(ctx context.Context, changeID string) error {
 		if err := json.Unmarshal(sr.Result, &cr); err != nil {
 			return fmt.Errorf("snapd: cannot parse change: %w", err)
 		}
-		switch cr.Status {
-		case "Done":
-			return nil
-		case "Error":
-			msg := "unknown error"
-			if cr.Err != nil {
-				msg = cr.Err.Message
+		if cr.Ready {
+			if cr.Status == "Done" && cr.Err == "" {
+				return nil
 			}
-			return fmt.Errorf("snapd: change %s failed: %s", changeID, msg)
+			if cr.Err != "" {
+				return fmt.Errorf("snapd: change %s failed: %s", changeID, cr.Err)
+			}
+			return fmt.Errorf("snapd: change %s is ready with status %s", changeID, cr.Status)
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(500 * time.Millisecond):
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(changeRetryDelay)
+		if err := c.retryWait(ctx, timer); err != nil {
+			return err
 		}
 	}
 }
