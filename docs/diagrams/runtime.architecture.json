@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "landscape-client-core runtime architecture",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "outbound",
+        "label": "Outbound metrics",
+        "focus": [
+          "monitor",
+          "exchange",
+          "transport",
+          "server"
+        ],
+        "note": "Monitor plugins queue messages; the exchange bpickle-encodes and POSTs them."
+      },
+      {
+        "id": "inbound",
+        "label": "Inbound commands",
+        "focus": [
+          "server",
+          "transport",
+          "exchange",
+          "manager",
+          "snapd"
+        ],
+        "note": "Server commands are dispatched to manager handlers, which drive snapd."
+      },
+      {
+        "id": "ping",
+        "label": "Ping wake-up",
+        "focus": [
+          "ping",
+          "server",
+          "exchange"
+        ],
+        "note": "A ping reporting pending messages triggers an urgent exchange."
+      }
+    ],
+    "repository": {
+      "url": "https://github.com/mcw-work/landscape-client-core",
+      "provider": "github",
+      "revision": "a1cfeaec2a41ae9e2a0145c86a3f9b699103e525"
+    }
+  },
+  "components": [
+    {
+      "id": "persist",
+      "type": "database",
+      "label": "Persist store",
+      "sublabel": "state.json",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/persist/persist.go"
+        }
+      ]
+    },
+    {
+      "id": "ping",
+      "type": "backend",
+      "label": "Ping loop",
+      "sublabel": "every 30s",
+      "pos": [
+        520,
+        40
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/ping/ping.go"
+        }
+      ]
+    },
+    {
+      "id": "monitor",
+      "type": "backend",
+      "label": "Monitor runner",
+      "sublabel": "15 plugins",
+      "pos": [
+        40,
+        190
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/monitor/runner.go"
+        }
+      ]
+    },
+    {
+      "id": "exchange",
+      "type": "backend",
+      "label": "Exchange",
+      "sublabel": "queue + sequence",
+      "tag": "bpickle",
+      "pos": [
+        280,
+        190
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/exchange/exchange.go"
+        }
+      ]
+    },
+    {
+      "id": "transport",
+      "type": "security",
+      "label": "Transport",
+      "sublabel": "HTTPS / TLS pin",
+      "pos": [
+        520,
+        190
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/transport/transport.go"
+        }
+      ]
+    },
+    {
+      "id": "server",
+      "type": "external",
+      "label": "Landscape Server",
+      "sublabel": "message-system",
+      "pos": [
+        760,
+        190
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "snapd",
+      "type": "external",
+      "label": "snapd",
+      "sublabel": "/run/snapd.socket",
+      "pos": [
+        760,
+        340
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/snapd/snapd.go"
+        }
+      ]
+    },
+    {
+      "id": "manager",
+      "type": "backend",
+      "label": "Manager runner",
+      "sublabel": "8 handlers",
+      "pos": [
+        280,
+        340
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "internal/manager/runner.go"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "landscape-client-core snap (strict)",
+      "wraps": [
+        "persist",
+        "ping",
+        "monitor",
+        "exchange",
+        "transport",
+        "manager"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "metrics",
+      "from": "monitor",
+      "to": "exchange",
+      "label": "Send(msg)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "post",
+      "from": "exchange",
+      "to": "transport",
+      "label": "POST",
+      "variant": "emphasis"
+    },
+    {
+      "id": "https",
+      "from": "transport",
+      "to": "server",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "state",
+      "from": "exchange",
+      "to": "persist",
+      "label": "seq + IDs",
+      "fromSide": "top",
+      "toSide": "right"
+    },
+    {
+      "id": "ping-server",
+      "from": "ping",
+      "to": "server",
+      "label": "ping",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "top"
+    },
+    {
+      "id": "trigger",
+      "from": "ping",
+      "to": "exchange",
+      "label": "trigger",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "top"
+    },
+    {
+      "id": "dispatch",
+      "from": "exchange",
+      "to": "manager",
+      "label": "dispatch",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        355,
+        297
+      ]
+    },
+    {
+      "id": "snap-ops",
+      "from": "manager",
+      "to": "snapd",
+      "label": "REST",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "snap-query",
+      "from": "monitor",
+      "to": "snapd",
+      "label": "query",
+      "fromSide": "bottom",
+      "toSide": "bottom"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Outbound",
+      "items": [
+        "Plugins back off 1s to 5min on failure",
+        "Exchange ticks every 15 min (urgent: 1 min)"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Inbound",
+      "items": [
+        "Each handler runs in its own goroutine",
+        "Results return as operation-result messages"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Confinement",
+      "items": [
+        "Config via snapctl, state under $SNAP_COMMON",
+        "snapd-control, network, shutdown plugs"
+      ]
+    }
+  ]
+}
