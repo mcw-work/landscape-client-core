@@ -66,7 +66,7 @@ parts:
     plugin: go
     source: .
     build-snaps:
-      - go/1.22/stable
+      - go/1.25/stable
     stage-packages:
       - lshw
       - curl
