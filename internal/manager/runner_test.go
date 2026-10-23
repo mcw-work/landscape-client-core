@@ -4,8 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log"
-	"os"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -231,10 +230,11 @@ func TestRunner_PanicSendsFailed(t *testing.T) {
 // TestRunner_HandlerErrorLogged verifies that a handler returning an error
 // causes the error to be logged and does not crash the runner.
 func TestRunner_HandlerErrorLogged(t *testing.T) {
-	// Redirect log output so we can inspect it.
+	// Redirect slog output so we can inspect it.
 	var buf bytes.Buffer
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	source := newMockCommandSource()
 	sink := &mockResultSink{}

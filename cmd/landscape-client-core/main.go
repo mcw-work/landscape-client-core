@@ -20,6 +20,7 @@ import (
 	"github.com/canonical/landscape-client-core/internal/monitor"
 	"github.com/canonical/landscape-client-core/internal/persist"
 	"github.com/canonical/landscape-client-core/internal/ping"
+	"github.com/canonical/landscape-client-core/internal/runcmd"
 	"github.com/canonical/landscape-client-core/internal/snapd"
 	"github.com/canonical/landscape-client-core/internal/transport"
 	"github.com/canonical/landscape-client-core/internal/version"
@@ -84,7 +85,7 @@ func main() {
 	tc, err := transport.New(transport.Config{
 		// The server extracts the client version from User-Agent: landscape-client/<version>
 		// and uses it to check snap monitoring compatibility (requires >= 23.02+git6282).
-		UserAgent:    version.UserAgent,
+		UserAgent:    version.UserAgent(),
 		SSLPublicKey: cfg.SSLPublicKey,
 		HTTPProxy:    cfg.HTTPProxy,
 		HTTPSProxy:   cfg.HTTPSProxy,
@@ -97,8 +98,46 @@ func main() {
 	// Create snapd client.
 	snapdClient := snapd.New("/run/snapd.socket")
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+
+	if err := run(ctx, deps{
+		cfg:                cfg,
+		store:              store,
+		transport:          tc,
+		snapd:              snapdClient,
+		snapCommon:         snapCommon,
+		handlerConcurrency: *handlerConcurrency,
+	}); err != nil {
+		slog.Error("daemon exited with error", "error", err)
+		os.Exit(1)
+	}
+}
+
+// deps holds the constructed collaborators run() needs, so the daemon wiring
+// can be exercised in tests without touching snapctl or the real snapd socket.
+type deps struct {
+	cfg                *config.Config
+	store              *persist.Store
+	transport          *transport.Client
+	snapd              snapd.Client
+	snapCommon         string
+	handlerConcurrency int
+}
+
+// run wires up the exchange, monitor, manager and ping loops and blocks until
+// ctx is cancelled or a runner fails, then shuts down gracefully. It contains
+// no behaviour that main() did not previously perform inline.
+func run(ctx context.Context, d deps) error {
+	cfg := d.cfg
+	store := d.store
+	tc := d.transport
+	snapdClient := d.snapd
+	snapCommon := d.snapCommon
+
 	// Create exchange.
 	exc := exchange.New(cfg, store, tc)
+	exc.SetSpool(filepath.Join(snapCommon, "queue.json"))
 
 	// Create monitor runner with all plugins.
 	snapPackages := monitor.NewSnapPackages(snapdClient)
@@ -122,7 +161,8 @@ func main() {
 	monRunner := monitor.New(plugins, exc, store)
 
 	// sendSnapUpdate sends an immediate snaps message after a snap operation.
-	sendSnapUpdate := func() { snapPackages.SendNow(context.Background(), exc) }
+	// Uses the daemon context so a snapd call cannot outlive shutdown.
+	sendSnapUpdate := func() { snapPackages.SendNow(ctx, exc) }
 
 	// Create manager runner with all handlers.
 	handlers := []manager.Handler{
@@ -135,7 +175,7 @@ func main() {
 		manager.NewShutdownHandler(),
 		manager.NewScriptExecHandler(snapCommon, transport.NewAttachmentFetcher(tc, cfg.URL, store)),
 	}
-	mgRunner := manager.NewRunner(handlers, exc, exc, *handlerConcurrency)
+	mgRunner := manager.NewRunner(handlers, exc, exc, d.handlerConcurrency)
 	mgRunner.Register()
 
 	// Create ping loop. The Pinger periodically POSTs to the ping server and
@@ -159,8 +199,7 @@ func main() {
 		}
 	})
 
-	// Signal handling.
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// Run goroutines under a shared errgroup context.
@@ -198,6 +237,26 @@ func main() {
 		}
 		return nil
 	})
+	// Watchdog: restart-condition only covers process exit, so a goroutine
+	// blocked forever in a syscall keeps the daemon alive while silently
+	// reporting nothing. Exiting non-zero lets snapd's restart-condition recover
+	// a wedged daemon.
+	eg.Go(func() error {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-groupCtx.Done():
+				return nil
+			case <-ticker.C:
+				if stale := monRunner.StaleSources(); len(stale) > 0 {
+					slog.Error("watchdog: sources stopped making progress; exiting for restart",
+						"sources", stale)
+					return fmt.Errorf("watchdog: stale sources: %v", stale)
+				}
+			}
+		}
+	})
 
 	groupDone := make(chan error, 1)
 	go func() {
@@ -205,12 +264,13 @@ func main() {
 	}()
 
 	// Wait for shutdown signal or the first runner error.
+	var groupErr error
 	select {
 	case <-ctx.Done():
 		slog.Info("shutting down")
-	case err := <-groupDone:
-		if err != nil {
-			slog.Error("first runner error", "error", err)
+	case groupErr = <-groupDone:
+		if groupErr != nil {
+			slog.Error("first runner error", "error", groupErr)
 		}
 		cancel()
 		slog.Info("shutting down")
@@ -220,22 +280,30 @@ func main() {
 		slog.Error("error waiting for manager runner", "error", err)
 	}
 
-	// Wait up to 5s for goroutines to finish.
-	select {
-	case err := <-groupDone:
-		if err != nil {
-			slog.Error("runner group exited with error", "error", err)
+	// If the group has not already reported, wait for it now. When the first
+	// select already drained groupDone, reading again would block the full grace
+	// period for a value that will never arrive.
+	if groupErr == nil {
+		select {
+		case err := <-groupDone:
+			if err != nil {
+				slog.Error("runner group exited with error", "error", err)
+			}
+		case <-time.After(5 * time.Second):
+			slog.Warn("shutdown timeout, exiting")
 		}
-	case <-time.After(5 * time.Second):
-		slog.Warn("shutdown timeout, exiting")
 	}
+
+	return nil
 }
 
 // snapctlLoader implements config.Loader using snapctl.
 type snapctlLoader struct{}
 
 func (s *snapctlLoader) Get(key string) (string, error) {
-	out, err := exec.Command("snapctl", "get", key).Output()
+	// Loader.Get has no context; snapctl is fast and local, so use a fresh
+	// background context with a bounded timeout rather than widening the interface.
+	out, err := runcmd.Run(context.Background(), 30*time.Second, "snapctl", "get", key)
 	if err != nil {
 		return "", fmt.Errorf("snapctl get %s: %w", key, err)
 	}

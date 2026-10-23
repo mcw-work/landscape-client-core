@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,9 +35,123 @@ func newTransport(t *testing.T) *transport.Client {
 	return tc
 }
 
+func receiveWithin[T any](t *testing.T, ch <-chan T) T {
+	t.Helper()
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for channel")
+		var zero T
+		return zero
+	}
+}
+
+func assertNoReceiveWithin[T any](t *testing.T, ch <-chan T) {
+	t.Helper()
+	select {
+	case value := <-ch:
+		t.Fatalf("unexpected channel value: %v", value)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+type fakePingTimer struct {
+	ch     chan time.Time
+	resets chan time.Duration
+}
+
+func newFakePingTimer() *fakePingTimer {
+	return &fakePingTimer{
+		ch:     make(chan time.Time, 1),
+		resets: make(chan time.Duration, 1),
+	}
+}
+
+func (t *fakePingTimer) Chan() <-chan time.Time {
+	return t.ch
+}
+
+func (t *fakePingTimer) Reset(interval time.Duration) bool {
+	t.resets <- interval
+	return false
+}
+
+func (t *fakePingTimer) Stop() bool {
+	return false
+}
+
+func (t *fakePingTimer) fire() {
+	t.ch <- time.Time{}
+}
+
+func TestPinger_WaitCancelsWhileTimerArmed(t *testing.T) {
+	const interval = time.Hour
+
+	p := New("", func() string { return "" }, func() {}, interval, newTransport(t))
+	timer := newFakePingTimer()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	waitResult := make(chan bool, 1)
+
+	go func() {
+		waitResult <- p.wait(ctx, timer)
+	}()
+
+	if got := receiveWithin(t, timer.resets); got != interval {
+		t.Fatalf("Reset interval: want %v, got %v", interval, got)
+	}
+	cancel()
+	if receiveWithin(t, waitResult) {
+		t.Fatal("wait returned true after context cancellation")
+	}
+}
+
+func TestPinger_SetIntervalAffectsNextArm(t *testing.T) {
+	const (
+		originalInterval = time.Hour
+		newInterval      = 2 * time.Hour
+	)
+
+	p := New("", func() string { return "" }, func() {}, originalInterval, newTransport(t))
+	timer := newFakePingTimer()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	firstWait := make(chan bool, 1)
+	go func() {
+		firstWait <- p.wait(ctx, timer)
+	}()
+
+	if got := receiveWithin(t, timer.resets); got != originalInterval {
+		t.Fatalf("first Reset interval: want %v, got %v", originalInterval, got)
+	}
+
+	p.SetInterval(newInterval)
+	assertNoReceiveWithin(t, firstWait)
+	timer.fire()
+	if !receiveWithin(t, firstWait) {
+		t.Fatal("first wait returned false after the timer fired")
+	}
+
+	secondWait := make(chan bool, 1)
+	go func() {
+		secondWait <- p.wait(ctx, timer)
+	}()
+
+	if got := receiveWithin(t, timer.resets); got != newInterval {
+		t.Fatalf("second Reset interval: want %v, got %v", newInterval, got)
+	}
+	timer.fire()
+	if !receiveWithin(t, secondWait) {
+		t.Fatal("second wait returned false after the timer fired")
+	}
+}
+
 // TestPing_TriggersExchangeWhenMessagesTrue verifies that doPing returns true
 // and TriggerExchange is called when the server says messages=True.
 func TestPing_TriggersExchangeWhenMessagesTrue(t *testing.T) {
+	t.Parallel()
 	var triggered atomic.Bool
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +189,7 @@ func TestPing_TriggersExchangeWhenMessagesTrue(t *testing.T) {
 // TestPing_NoTriggerWhenMessagesFalse verifies TriggerExchange is NOT called
 // when the server says messages=False.
 func TestPing_NoTriggerWhenMessagesFalse(t *testing.T) {
+	t.Parallel()
 	var triggered atomic.Bool
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -96,6 +212,7 @@ func TestPing_NoTriggerWhenMessagesFalse(t *testing.T) {
 // TestPing_SkipsWhenNotRegistered verifies that pings are skipped when
 // getInsecureID returns empty string.
 func TestPing_SkipsWhenNotRegistered(t *testing.T) {
+	t.Parallel()
 	var pinged atomic.Bool
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +237,7 @@ func TestPing_SkipsWhenNotRegistered(t *testing.T) {
 // TestPing_HandlesServerError verifies that HTTP errors are logged and the
 // loop continues without crashing.
 func TestPing_HandlesServerError(t *testing.T) {
+	t.Parallel()
 	var triggered atomic.Bool
 	var callCount atomic.Int32
 
@@ -220,32 +338,27 @@ func TestPinger_IntervalConcurrentAccess(t *testing.T) {
 	start := make(chan struct{})
 	var sawValue atomic.Bool
 
-	for i := 0; i < writers; i++ {
+	for i := range writers {
 		wg.Add(1)
 		go func(offset int) {
 			defer wg.Done()
 			<-start
-			for j := 0; j < iterations; j++ {
+			for j := range iterations {
 				p.SetInterval(durations[(j+offset)%len(durations)])
 			}
 		}(i)
 	}
 
-	for i := 0; i < readers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range readers {
+		wg.Go(func() {
 			<-start
-			for j := 0; j < iterations; j++ {
+			for range iterations {
 				got := p.GetInterval()
-				for _, want := range durations {
-					if got == want {
-						sawValue.Store(true)
-						break
-					}
+				if slices.Contains(durations, got) {
+					sawValue.Store(true)
 				}
 			}
-		}()
+		})
 	}
 
 	close(start)

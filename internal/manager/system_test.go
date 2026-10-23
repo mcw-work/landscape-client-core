@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
 	"github.com/canonical/landscape-client-core/internal/manager"
@@ -56,7 +57,7 @@ func TestShutdownHandler_Reboot(t *testing.T) {
 	}}
 
 	h := manager.NewShutdownHandler()
-	h.Shutdown = func(reboot bool) error {
+	h.Shutdown = func(_ context.Context, reboot bool) error {
 		if reboot {
 			events = append(events, "shutdown:reboot")
 		} else {
@@ -92,7 +93,7 @@ func TestShutdownHandler_Poweroff(t *testing.T) {
 	var gotReboot *bool
 
 	h := manager.NewShutdownHandler()
-	h.Shutdown = func(reboot bool) error {
+	h.Shutdown = func(_ context.Context, reboot bool) error {
 		gotReboot = &reboot
 		return nil
 	}
@@ -121,7 +122,7 @@ func TestShutdownHandler_ExecError(t *testing.T) {
 	sink := &mockResultSink{}
 
 	h := manager.NewShutdownHandler()
-	h.Shutdown = func(_ bool) error {
+	h.Shutdown = func(_ context.Context, _ bool) error {
 		return fmt.Errorf("shutdown failed")
 	}
 
@@ -196,6 +197,7 @@ func TestScriptExecHandler_Failure(t *testing.T) {
 }
 
 func TestScriptExecHandler_TimeLimit(t *testing.T) {
+	t.Parallel()
 	sink := &mockResultSink{}
 	h := manager.NewScriptExecHandler(t.TempDir(), nil)
 
@@ -254,8 +256,9 @@ func TestScriptExecHandler_OutputTruncated(t *testing.T) {
 
 func TestScriptExecHandler_UsernameWarning(t *testing.T) {
 	var logBuf bytes.Buffer
-	log.SetOutput(&logBuf)
-	defer log.SetOutput(os.Stderr)
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prev)
 
 	sink := &mockResultSink{}
 	h := manager.NewScriptExecHandler(t.TempDir(), nil)
@@ -375,6 +378,7 @@ func TestScriptExecHandler_BadInterpreter(t *testing.T) {
 }
 
 func TestScriptExecHandler_TimeoutResultCode(t *testing.T) {
+	t.Parallel()
 	sink := &mockResultSink{}
 	h := manager.NewScriptExecHandler(t.TempDir(), nil)
 
@@ -396,6 +400,86 @@ func TestScriptExecHandler_TimeoutResultCode(t *testing.T) {
 	}
 	if call.resultCode != 102 {
 		t.Errorf("resultCode = %d, want 102 (timeout)", call.resultCode)
+	}
+}
+
+// TestScriptExec_TimeLimitKillsProcessGroup asserts a script that spawns a
+// background child cannot outlive its time-limit. exec.CommandContext alone
+// kills only the direct child, and the surviving child holds the stdout pipe
+// open, which blocks cmd.Run well past the deadline. The backgrounded child
+// also leaves no orphan: it would touch a marker file after the WaitDelay if it
+// survived, so the marker's absence proves the process group was reaped.
+func TestScriptExec_TimeLimitKillsProcessGroup(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "orphan-marker")
+	h := manager.NewScriptExecHandler(dir, nil)
+	sink := &mockResultSink{}
+
+	msg := exchange.Message{
+		"type":         "execute-script",
+		"operation-id": int64(1),
+		"code":         "(sleep 7; touch " + marker + ") & echo started\n",
+		"interpreter":  "/bin/sh",
+		"time-limit":   int64(1),
+	}
+
+	start := time.Now()
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	if elapsed > 10*time.Second {
+		t.Fatalf("time-limit not enforced: Handle took %v for a 1s limit", elapsed)
+	}
+
+	if len(sink.calls) != 1 {
+		t.Fatalf("want 1 result, got %d", len(sink.calls))
+	}
+	if sink.calls[0].resultCode != 102 {
+		t.Errorf("result-code: want 102 (timeout), got %d", sink.calls[0].resultCode)
+	}
+
+	// Wait past the child's 7s touch to prove it was killed with its group,
+	// not merely detached from the reaped shell. The process group is reaped by
+	// cmd.WaitDelay (5s), so the child must outlive that window for the test to
+	// distinguish a real group-kill from the child simply finishing first.
+	for time.Since(start) < 9*time.Second {
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatal("orphaned background child survived the time-limit: it created its marker after the process group should have been reaped")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// TestScriptExec_TimeLimitPreservesPartialOutput guards behaviour that is
+// already correct and must not regress.
+func TestScriptExec_TimeLimitPreservesPartialOutput(t *testing.T) {
+	t.Parallel()
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+	sink := &mockResultSink{}
+
+	msg := exchange.Message{
+		"type":         "execute-script",
+		"operation-id": int64(2),
+		"code":         "echo before-timeout; sleep 30\n",
+		"interpreter":  "/bin/sh",
+		"time-limit":   int64(1),
+	}
+
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(sink.calls) != 1 {
+		t.Fatalf("want 1 result, got %d", len(sink.calls))
+	}
+	if sink.calls[0].resultCode != 102 {
+		t.Errorf("result-code: want 102, got %d", sink.calls[0].resultCode)
+	}
+	if !strings.Contains(sink.calls[0].output, "before-timeout") {
+		t.Errorf("partial output lost: got %q", sink.calls[0].output)
 	}
 }
 
@@ -558,5 +642,141 @@ func TestScriptExecHandler_AttachmentPathTraversal(t *testing.T) {
 	}
 	if call.resultCode != 104 {
 		t.Errorf("resultCode = %d, want 104", call.resultCode)
+	}
+}
+
+// TestScriptExec_ExecFailureReportsReason asserts a fork/exec failure sends the
+// reason rather than an empty result-text. On Ubuntu Core the Landscape UI may
+// be the operator's only feedback channel.
+func TestScriptExec_ExecFailureReportsReason(t *testing.T) {
+	dir := t.TempDir()
+	notExecutable := filepath.Join(dir, "not-executable")
+	if err := os.WriteFile(notExecutable, []byte("#!/bin/sh\n"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+	sink := &mockResultSink{}
+
+	msg := exchange.Message{
+		"type":         "execute-script",
+		"operation-id": int64(1),
+		"code":         "echo hi\n",
+		"interpreter":  notExecutable,
+	}
+
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if call.output == "" {
+		t.Fatal("result-text was empty: the operator sees a blank failure")
+	}
+	if !strings.Contains(call.output, "permission denied") {
+		t.Errorf("result-text should explain the failure, got %q", call.output)
+	}
+}
+
+// TestScriptExec_NonZeroExitReportsCode asserts the exit status reaches the
+// server alongside the script's own output.
+func TestScriptExec_NonZeroExitReportsCode(t *testing.T) {
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+	sink := &mockResultSink{}
+
+	msg := exchange.Message{
+		"type":         "execute-script",
+		"operation-id": int64(2),
+		"code":         "echo to-stdout; exit 42\n",
+		"interpreter":  "/bin/sh",
+	}
+
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if !strings.Contains(call.output, "to-stdout") {
+		t.Errorf("script output lost: %q", call.output)
+	}
+	if !strings.Contains(call.output, "42") {
+		t.Errorf("exit status 42 not reported: %q", call.output)
+	}
+}
+
+// TestScriptExec_WhitespaceInterpreter asserts a whitespace-only interpreter is
+// treated as absent rather than panicking. strings.Fields returns an empty
+// slice for all of these, and the code indexed [0] unguarded.
+func TestScriptExec_WhitespaceInterpreter(t *testing.T) {
+	tests := []struct {
+		name        string
+		interpreter string
+	}{
+		{"empty", ""},
+		{"space", " "},
+		{"tab", "\t"},
+		{"newline", "\n"},
+		{"spaces", "   "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := manager.NewScriptExecHandler(t.TempDir(), nil)
+			sink := &mockResultSink{}
+
+			msg := exchange.Message{
+				"type":         "execute-script",
+				"operation-id": int64(1),
+				"code":         "echo ran-ok\n",
+				"interpreter":  tt.interpreter,
+			}
+
+			if err := h.Handle(context.Background(), msg, sink); err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+
+			call, ok := sink.lastCall()
+			if !ok {
+				t.Fatal("no result sent")
+			}
+			if strings.Contains(call.output, "panic") {
+				t.Fatalf("handler panicked; operator sees a Go runtime error: %q", call.output)
+			}
+			if !strings.Contains(call.output, "ran-ok") {
+				t.Errorf("script should have run under the default interpreter, got %q", call.output)
+			}
+		})
+	}
+}
+
+// TestScriptExec_DirectoryInterpreter asserts a directory is rejected before
+// exec with a specific reason, rather than passing os.Stat and failing later.
+func TestScriptExec_DirectoryInterpreter(t *testing.T) {
+	h := manager.NewScriptExecHandler(t.TempDir(), nil)
+	sink := &mockResultSink{}
+
+	msg := exchange.Message{
+		"type":         "execute-script",
+		"operation-id": int64(2),
+		"code":         "echo hi\n",
+		"interpreter":  t.TempDir(),
+	}
+
+	if err := h.Handle(context.Background(), msg, sink); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	call, ok := sink.lastCall()
+	if !ok {
+		t.Fatal("no result sent")
+	}
+	if !strings.Contains(call.output, "not executable") {
+		t.Errorf("want an explicit not-executable message, got %q", call.output)
 	}
 }

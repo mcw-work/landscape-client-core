@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,11 +18,14 @@ import (
 
 const (
 	defaultConnectTimeout = 30 * time.Second
+	defaultTotalTimeout   = 600 * time.Second
 	contentType           = "application/octet-stream"
 
 	// maxResponseBytes caps successful response bodies to prevent a
 	// misbehaving or compromised server from exhausting process memory.
-	maxResponseBytes = 32 * 1024 * 1024 // 32 MiB
+	// 32 MiB was far above any legitimate payload; 4 MiB also bounds the
+	// input the bpickle decoder can be asked to walk.
+	maxResponseBytes = 4 * 1024 * 1024 // 4 MiB
 )
 
 // Config configures a transport Client.
@@ -65,7 +69,7 @@ func New(cfg Config) (*Client, error) {
 	if cfg.SSLPublicKey != "" {
 		pemData, err := os.ReadFile(cfg.SSLPublicKey)
 		if err != nil {
-			return nil, fmt.Errorf("transport: reading SSL public key: %w", err)
+			return nil, fmt.Errorf("transport: cannot read SSL public key: %w", err)
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pemData) {
@@ -77,6 +81,11 @@ func New(cfg Config) (*Client, error) {
 	connectTimeout := cfg.ConnectTimeout
 	if connectTimeout == 0 {
 		connectTimeout = defaultConnectTimeout
+	}
+
+	totalTimeout := cfg.TotalTimeout
+	if totalTimeout == 0 {
+		totalTimeout = defaultTotalTimeout
 	}
 
 	httpProxy := cfg.HTTPProxy
@@ -112,7 +121,7 @@ func New(cfg Config) (*Client, error) {
 	return &Client{
 		httpClient:   httpClient,
 		userAgent:    cfg.UserAgent,
-		totalTimeout: cfg.TotalTimeout,
+		totalTimeout: totalTimeout,
 	}, nil
 }
 
@@ -127,7 +136,7 @@ func (c *Client) doRequest(ctx context.Context, method, rawURL string, inBody io
 
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, inBody)
 	if err != nil {
-		return nil, fmt.Errorf("transport: creating request: %w", err)
+		return nil, fmt.Errorf("transport: cannot create request: %w", err)
 	}
 
 	for k, v := range headers {
@@ -136,7 +145,7 @@ func (c *Client) doRequest(ctx context.Context, method, rawURL string, inBody io
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("transport: sending request: %w", err)
+		return nil, fmt.Errorf("transport: cannot send request: %w", err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -148,7 +157,7 @@ func (c *Client) doRequest(ctx context.Context, method, rawURL string, inBody io
 	}
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		return nil, fmt.Errorf("transport: reading response from %s: %w", rawURL, err)
+		return nil, fmt.Errorf("transport: cannot read response from %s: %w", rawURL, err)
 	}
 	return respBody, nil
 }
@@ -161,9 +170,7 @@ func (c *Client) Post(ctx context.Context, rawURL string, headers map[string]str
 	if c.userAgent != "" {
 		mergedHeaders["User-Agent"] = c.userAgent
 	}
-	for k, v := range headers {
-		mergedHeaders[k] = v
-	}
+	maps.Copy(mergedHeaders, headers)
 	mergedHeaders["Content-Type"] = contentType // enforce; callers cannot override
 	return c.doRequest(ctx, http.MethodPost, rawURL, bytes.NewReader(body), mergedHeaders)
 }
@@ -176,9 +183,7 @@ func (c *Client) Get(ctx context.Context, rawURL string, headers map[string]stri
 	if c.userAgent != "" {
 		merged["User-Agent"] = c.userAgent
 	}
-	for k, v := range headers {
-		merged[k] = v
-	}
+	maps.Copy(merged, headers)
 	return c.doRequest(ctx, http.MethodGet, rawURL, nil, merged)
 }
 

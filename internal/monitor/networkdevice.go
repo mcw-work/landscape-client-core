@@ -1,14 +1,17 @@
 package monitor
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
-	"sort"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +25,7 @@ type networkDeviceState struct {
 }
 
 type NetworkDevice struct {
+	heartbeatSource
 	interval      time.Duration
 	getInterfaces func() ([]net.Interface, error)
 	getAddrs      func(iface *net.Interface) ([]net.Addr, error)
@@ -39,58 +43,65 @@ func NewNetworkDevice() *NetworkDevice {
 
 func (p *NetworkDevice) Name() string { return "network-device" }
 
+func (p *NetworkDevice) Interval() time.Duration { return p.interval }
+
 func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved networkDeviceState
 	if state != nil {
-		_ = state.GetPluginState(&saved)
-	}
-
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			devices, speeds, err := p.collect()
-			if err != nil {
-				log.Printf("network-device: %v", err)
-				continue
-			}
-			combined := []any{devices, speeds}
-			data, err := json.Marshal(combined)
-			if err != nil {
-				log.Printf("network-device: marshal: %v", err)
-				continue
-			}
-			hash := fmt.Sprintf("%x", sha256.Sum256(data))
-			if hash == saved.Hash {
-				continue
-			}
-			saved.Hash = hash
-			if state != nil {
-				_ = state.SetPluginState(saved)
-			}
-			msg := exchange.Message{
-				"type":          "network-device",
-				"devices":       devices,
-				"device-speeds": speeds,
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("network-device: send: %v", err)
-			}
+		if err := state.GetPluginState(&saved); err != nil {
+			// Zero state is not equivalent to "no changes yet": for users it
+			// re-sends every account as a create.
+			slog.Warn("network-device: cannot load state, treating as first run", "error", err)
 		}
 	}
+
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		devices, speeds, err := p.collect()
+		if err != nil {
+			slog.Warn("network-device: cannot collect", "error", err)
+			return
+		}
+		combined := []any{devices, speeds}
+		data, err := json.Marshal(combined)
+		if err != nil {
+			slog.Warn("network-device: cannot marshal", "error", err)
+			return
+		}
+		sum := sha256.Sum256(data)
+		hash := hex.EncodeToString(sum[:])
+		if hash == saved.Hash {
+			return
+		}
+		if state != nil {
+			if err := state.SetPluginState(networkDeviceState{Hash: hash}); err != nil {
+				// Do not advance the in-memory hash: if the save failed, the
+				// change must be re-detected and re-sent next tick.
+				slog.Error("network-device: cannot save state, will retry next tick", "error", err)
+				return
+			}
+		}
+		saved.Hash = hash
+		msg := exchange.Message{
+			"type":          "network-device",
+			"devices":       devices,
+			"device-speeds": speeds,
+		}
+		if err := sink.Send(ctx, msg); err != nil {
+			slog.Warn("network-device: send failed", "error", err)
+		}
+	})
+	return nil
 }
 
 func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 	ifaces, err := p.getInterfaces()
 	if err != nil {
-		return nil, nil, fmt.Errorf("listing interfaces: %w", err)
+		return nil, nil, fmt.Errorf("cannot list interfaces: %w", err)
 	}
 
-	sort.Slice(ifaces, func(i, j int) bool {
-		return ifaces[i].Name < ifaces[j].Name
+	slices.SortFunc(ifaces, func(a, b net.Interface) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 
 	var devices []map[string]any
@@ -110,7 +121,7 @@ func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 		}
 
 		mac := iface.HardwareAddr.String()
-		flags := int(iface.Flags)
+		flags := p.readFlags(iface)
 
 		ipAddr := ""
 		broadcastAddr := "0.0.0.0"
@@ -118,7 +129,7 @@ func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 
 		addrs, err := p.getAddrs(iface)
 		if err != nil {
-			log.Printf("network-device: getting addrs for %s: %v", name, err)
+			slog.Warn("network-device: cannot get addrs", "interface", name, "error", err)
 		} else {
 			for _, addr := range addrs {
 				ipNet, ok := addr.(*net.IPNet)
@@ -133,7 +144,7 @@ func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 				mask := ipNet.Mask
 				netmask = fmt.Sprintf("%d.%d.%d.%d", mask[0], mask[1], mask[2], mask[3])
 				broadcast := make(net.IP, 4)
-				for i := 0; i < 4; i++ {
+				for i := range 4 {
 					broadcast[i] = ip4[i] | ^mask[i]
 				}
 				broadcastAddr = broadcast.String()
@@ -168,8 +179,59 @@ func (p *NetworkDevice) collect() ([]map[string]any, []map[string]any, error) {
 	return devices, speeds, nil
 }
 
+// Linux IFF_* values from <linux/if.h>. Go's net.Flags uses a different,
+// sequential bitmask; the Landscape server interprets this field as IFF_*.
+const (
+	iffUp           = 0x1
+	iffBroadcast    = 0x2
+	iffLoopback     = 0x8
+	iffPointToPoint = 0x10
+	iffRunning      = 0x40
+	iffMulticast    = 0x1000
+)
+
+// readFlags returns the kernel IFF_* bitmask for iface, read from
+// /sys/class/net/<name>/flags. When sysfs is unavailable — no such entry, or an
+// AppArmor denial under strict confinement — it falls back to translating Go's
+// net.Flags into IFF_* positions, so the interface is still reported rather than
+// dropped from the server's inventory.
+func (p *NetworkDevice) readFlags(iface *net.Interface) int {
+	data, err := os.ReadFile(filepath.Join(p.sysNetPath, iface.Name, "flags"))
+	if err == nil {
+		s := strings.TrimSpace(string(data))
+		s = strings.TrimPrefix(s, "0x")
+		if v, err := strconv.ParseInt(s, 16, 64); err == nil {
+			return int(v)
+		}
+	}
+	return translateGoFlags(iface.Flags)
+}
+
+func translateGoFlags(f net.Flags) int {
+	var out int
+	if f&net.FlagUp != 0 {
+		out |= iffUp
+	}
+	if f&net.FlagBroadcast != 0 {
+		out |= iffBroadcast
+	}
+	if f&net.FlagLoopback != 0 {
+		out |= iffLoopback
+	}
+	if f&net.FlagPointToPoint != 0 {
+		out |= iffPointToPoint
+	}
+	if f&net.FlagRunning != 0 {
+		out |= iffRunning
+	}
+	if f&net.FlagMulticast != 0 {
+		out |= iffMulticast
+	}
+	return out
+}
+
 func (p *NetworkDevice) readSpeed(iface string) int {
-	path := fmt.Sprintf("%s/%s/speed", p.sysNetPath, iface)
+	path := filepath.Join(p.sysNetPath, iface, "speed")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return -1
@@ -182,7 +244,7 @@ func (p *NetworkDevice) readSpeed(iface string) int {
 }
 
 func (p *NetworkDevice) readDuplex(iface string) bool {
-	path := fmt.Sprintf("%s/%s/duplex", p.sysNetPath, iface)
+	path := filepath.Join(p.sysNetPath, iface, "duplex")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false

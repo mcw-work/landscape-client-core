@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -18,8 +18,10 @@ import (
 // NetworkActivity monitors network I/O by reading /proc/net/dev and sending
 // per-interface byte deltas. Message fields match the Python networkactivity.py plugin.
 type NetworkActivity struct {
+	heartbeatSource
 	procNetDevPath string
-	interval       time.Duration
+	interval       time.Duration // sampling interval
+	sendInterval   time.Duration // how often buffered points are sent
 	lastRx         map[string]int64
 	lastTx         map[string]int64
 }
@@ -29,11 +31,14 @@ func NewNetworkActivity() *NetworkActivity {
 	return &NetworkActivity{
 		procNetDevPath: "/proc/net/dev",
 		interval:       30 * time.Second,
+		sendInterval:   5 * time.Minute,
 	}
 }
 
 // Name returns the Landscape message type string.
 func (p *NetworkActivity) Name() string { return "network-activity" }
+
+func (p *NetworkActivity) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic network activity collection loop. A baseline sample
 // is taken synchronously before the ticker starts so the first tick can
@@ -42,37 +47,51 @@ func (p *NetworkActivity) Run(ctx context.Context, sink exchange.MessageSink, _ 
 	// Prime baseline.
 	rx, tx, err := p.readDev()
 	if err != nil {
-		log.Printf("network-activity: priming baseline: %v", err)
+		slog.Warn("network-activity: cannot prime baseline", "error", err)
 	} else {
 		p.lastRx, p.lastTx = rx, tx
 	}
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case t := <-ticker.C:
-			rx, tx, err := p.readDev()
-			if err != nil {
-				log.Printf("network-activity: %v", err)
-				continue
+	accs := make(map[string]*accumulator)
+
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, t time.Time) {
+		p.beat(p.Name())
+		rx, tx, err := p.readDev()
+		if err != nil {
+			slog.Warn("network-activity: cannot read counters", "error", err)
+			return
+		}
+		activities := p.delta(t.Unix(), rx, tx)
+		p.lastRx, p.lastTx = rx, tx
+
+		// One accumulator per interface: each interface has its own send window
+		// so batching never mixes interfaces on the wire.
+		due := make(bpickle.BytesDict)
+		for iface, entries := range activities {
+			acc, ok := accs[iface]
+			if !ok {
+				acc = newAccumulator(p.sendInterval, time.Now)
+				accs[iface] = acc
 			}
-			activities := p.delta(t.Unix(), rx, tx)
-			p.lastRx, p.lastTx = rx, tx
-			if len(activities) == 0 {
-				continue
+			for _, e := range entries.([]any) {
+				acc.add(e)
 			}
-			msg := exchange.Message{
-				"type":       "network-activity",
-				"activities": activities,
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("network-activity: send: %v", err)
+			if points := acc.drainIfDue(); points != nil {
+				due[iface] = points
 			}
 		}
-	}
+		if len(due) == 0 {
+			return
+		}
+		msg := exchange.Message{
+			"type":       "network-activity",
+			"activities": due,
+		}
+		if err := sink.Send(ctx, msg); err != nil {
+			slog.Warn("network-activity: send failed", "error", err)
+		}
+	})
+	return nil
 }
 
 // readDev parses /proc/net/dev and returns per-interface rx and tx byte counts.
@@ -84,7 +103,7 @@ func (p *NetworkActivity) Run(ctx context.Context, sink exchange.MessageSink, _ 
 func (p *NetworkActivity) readDev() (rx, tx map[string]int64, err error) {
 	f, err := os.Open(p.procNetDevPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("opening %s: %w", p.procNetDevPath, err)
+		return nil, nil, fmt.Errorf("cannot open %s: %w", p.procNetDevPath, err)
 	}
 	defer func() {
 		_ = f.Close()
@@ -101,12 +120,12 @@ func (p *NetworkActivity) readDev() (rx, tx map[string]int64, err error) {
 			continue
 		}
 		line := scanner.Text()
-		colon := strings.Index(line, ":")
-		if colon < 0 {
+		before, after, ok := strings.Cut(line, ":")
+		if !ok {
 			continue
 		}
-		iface := strings.TrimSpace(line[:colon])
-		fields := strings.Fields(line[colon+1:])
+		iface := strings.TrimSpace(before)
+		fields := strings.Fields(after)
 		if len(fields) < 9 {
 			continue
 		}
@@ -121,6 +140,33 @@ func (p *NetworkActivity) readDev() (rx, tx map[string]int64, err error) {
 	return rx, tx, scanner.Err()
 }
 
+// counterWrapThreshold is how close to 2^32 the previous value must be for a
+// negative delta to be treated as a wrap rather than a counter reset. A
+// re-created interface starts near zero, so its previous value is nowhere near
+// the threshold.
+const (
+	counterWrap          = int64(1) << 32
+	counterWrapThreshold = counterWrap - (1 << 24) // within 16 MiB of the wrap point
+)
+
+// counterDelta returns the traffic between two samples of a kernel byte counter.
+//
+// On 32-bit systems (armhf Core devices) the counter wraps at 2^32, so a
+// negative raw delta following a near-maximum previous value is a wrap and the
+// wrapped amount must be added back — clamping it loses 4 GiB per interface per
+// wrap. A negative delta from a low previous value is a genuine reset (interface
+// re-created) and still clamps to zero. 64-bit counters do not wrap.
+func counterDelta(now, prev int64) int64 {
+	d := now - prev
+	if d >= 0 {
+		return d
+	}
+	if prev >= counterWrapThreshold {
+		return d + counterWrap
+	}
+	return 0
+}
+
 // delta computes per-interface deltas since the last sample. Returns a map of
 // interface name (as bytes) → []any{[]any{timestamp, rxDelta, txDelta}} matching the
 // Python network-activity message format.
@@ -133,15 +179,8 @@ func (p *NetworkActivity) delta(ts int64, rx, tx map[string]int64) bpickle.Bytes
 		if !hadRx || !hadTx {
 			continue
 		}
-		rxDelta := rxNow - lastRx
-		txDelta := txNow - lastTx
-		// Clamp rollover or counter resets to zero.
-		if rxDelta < 0 {
-			rxDelta = 0
-		}
-		if txDelta < 0 {
-			txDelta = 0
-		}
+		rxDelta := counterDelta(rxNow, lastRx)
+		txDelta := counterDelta(txNow, lastTx)
 		if rxDelta == 0 && txDelta == 0 {
 			continue
 		}

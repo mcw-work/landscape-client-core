@@ -3,9 +3,10 @@ package monitor
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 // messages. Message fields match the Python temperature.py plugin exactly.
 // If no thermal zones are found the plugin runs silently without sending messages.
 type Temperature struct {
+	heartbeatSource
 	sysfsPath string
 	interval  time.Duration
 }
@@ -34,32 +36,36 @@ func NewTemperature() *Temperature {
 // Name returns the Landscape message type string.
 func (p *Temperature) Name() string { return "temperature" }
 
+func (p *Temperature) Interval() time.Duration { return p.interval }
+
 // Run starts the periodic temperature collection loop.
 func (p *Temperature) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case t := <-ticker.C:
-			zones, err := p.readZones()
-			if err != nil {
-				log.Printf("temperature: %v", err)
-				continue
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, t time.Time) {
+		p.beat(p.Name())
+		zones, err := p.readZones()
+		if err != nil {
+			slog.Warn("temperature: cannot read zones", "error", err)
+			return
+		}
+		// Iterate a sorted slice: ranging the map emitted zones in a different
+		// order every tick.
+		names := make([]string, 0, len(zones))
+		for zone := range zones {
+			names = append(names, zone)
+		}
+		slices.Sort(names)
+		for _, zone := range names {
+			msg := exchange.Message{
+				"type":         "temperature",
+				"thermal-zone": zone,
+				"temperatures": []any{bpickle.Tuple{t.Unix(), zones[zone]}},
 			}
-			for zone, temp := range zones {
-				msg := exchange.Message{
-					"type":         "temperature",
-					"thermal-zone": zone,
-					"temperatures": []any{bpickle.Tuple{t.Unix(), temp}},
-				}
-				if err := sink.Send(ctx, msg); err != nil {
-					log.Printf("temperature: send: %v", err)
-				}
+			if err := sink.Send(ctx, msg); err != nil {
+				slog.Warn("temperature: send failed", "error", err)
 			}
 		}
-	}
+	})
+	return nil
 }
 
 // readZones globs sysfsPath/thermal_zone* directories and reads each zone's
@@ -69,7 +75,7 @@ func (p *Temperature) readZones() (map[string]float64, error) {
 	pattern := filepath.Join(p.sysfsPath, "thermal_zone*")
 	dirs, err := filepath.Glob(pattern)
 	if err != nil {
-		return nil, fmt.Errorf("globbing %s: %w", pattern, err)
+		return nil, fmt.Errorf("cannot glob %s: %w", pattern, err)
 	}
 	zones := make(map[string]float64, len(dirs))
 	for _, dir := range dirs {

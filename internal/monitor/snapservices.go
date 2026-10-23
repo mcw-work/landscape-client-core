@@ -1,12 +1,13 @@
 package monitor
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"log"
-	"sort"
+	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
@@ -24,6 +25,7 @@ type snapServicesState struct {
 // previously reported value. Message type and fields match the Python
 // snap-services plugin exactly.
 type SnapServicesPlugin struct {
+	heartbeatSource
 	interval    time.Duration
 	snapdClient snapd.Client
 }
@@ -39,6 +41,8 @@ func NewSnapServices(client snapd.Client) *SnapServicesPlugin {
 // Name returns the Landscape message type string.
 func (p *SnapServicesPlugin) Name() string { return "snap-services" }
 
+func (p *SnapServicesPlugin) Interval() time.Duration { return p.interval }
+
 // Run starts the periodic snap services collection loop. A message is emitted
 // only when the services list changes from its previously reported value.
 // The last reported hash is persisted via state so it survives restarts.
@@ -51,55 +55,58 @@ func (p *SnapServicesPlugin) Run(ctx context.Context, sink exchange.MessageSink,
 		}
 	}
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			services, err := p.snapdClient.ListServices(ctx)
-			if err != nil {
-				log.Printf("snap-services: listing services: %v", err)
-				continue
-			}
-			// Sort by name for stable hashing and consistent output.
-			sort.Slice(services, func(i, j int) bool {
-				return services[i].Name < services[j].Name
-			})
-			hash := hashSnapServices(services)
-			if hash == prevHash {
-				continue // no change, skip
-			}
-			prevHash = hash
-			if state != nil {
-				_ = state.SetPluginState(snapServicesState{Hash: hash})
-			}
-			running := make([]any, 0, len(services))
-			for _, svc := range services {
-				running = append(running, map[string]any{
-					"name":    svc.Name,
-					"snap":    svc.Snap,
-					"enabled": svc.Enabled,
-					"active":  svc.Active,
-				})
-			}
-			msg := exchange.Message{
-				"type": "snap-services",
-				"services": map[string]any{
-					"running": running,
-				},
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("snap-services: send: %v", err)
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+		services, err := p.snapdClient.ListServices(callCtx)
+		cancel()
+		if err != nil {
+			slog.Warn("snap-services: cannot list services", "error", err)
+			return
+		}
+		// Sort by name for stable hashing and consistent output.
+		slices.SortFunc(services, func(a, b snapd.ServiceInfo) int {
+			return cmp.Compare(a.Name, b.Name)
+		})
+		hash := hashSnapServices(services)
+		if hash == prevHash {
+			return // no change, skip
+		}
+		if state != nil {
+			if err := state.SetPluginState(snapServicesState{Hash: hash}); err != nil {
+				// Do not advance the in-memory hash: if the save failed, the
+				// change must be re-detected and re-sent next tick.
+				slog.Error("snap-services: cannot save state, will retry next tick", "error", err)
+				return
 			}
 		}
-	}
+		prevHash = hash
+		running := make([]any, 0, len(services))
+		for _, svc := range services {
+			running = append(running, map[string]any{
+				"name":    svc.Name,
+				"snap":    svc.Snap,
+				"enabled": svc.Enabled,
+				"active":  svc.Active,
+			})
+		}
+		msg := exchange.Message{
+			"type": "snap-services",
+			"services": map[string]any{
+				"running": running,
+			},
+		}
+		if err := sink.Send(ctx, msg); err != nil {
+			slog.Warn("snap-services: send failed", "error", err)
+		}
+	})
+	return nil
 }
 
 // hashSnapServices returns a hex SHA-256 digest of the JSON-encoded services
 // slice. The caller must sort the slice before calling this function.
 func hashSnapServices(services []snapd.ServiceInfo) string {
 	data, _ := json.Marshal(services)
-	return fmt.Sprintf("%x", sha256.Sum256(data))
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }

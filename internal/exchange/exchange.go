@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
+	"maps"
+	"math/rand"
 	"os"
 	"runtime/debug"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -18,10 +20,67 @@ import (
 	"github.com/canonical/landscape-client-core/internal/config"
 	"github.com/canonical/landscape-client-core/internal/persist"
 	"github.com/canonical/landscape-client-core/internal/transport"
-	"golang.org/x/sync/errgroup"
 )
 
 const apiVersion = "3.3"
+
+// maxMessagesPerExchange matches the Python client's max_messages.
+const maxMessagesPerExchange = 100
+
+const (
+	backoffMin = 300 * time.Second
+	backoffMax = 7200 * time.Second
+)
+
+// backoff sheds load from an overloaded server. Without it a fleet of devices
+// retries at a fixed interval against a server that is already struggling.
+// Ported from Python's ExponentialBackoff.
+type backoff struct {
+	delay time.Duration
+	rand  *rand.Rand
+}
+
+func newBackoff() *backoff {
+	return &backoff{rand: rand.New(rand.NewSource(time.Now().UnixNano()))}
+}
+
+// failure records an HTTP status. Only 429 and 5xx back off: a 4xx other than
+// 429 is our own bad request, and waiting does not help.
+func (b *backoff) failure(status int) {
+	if status != 429 && (status < 500 || status > 599) {
+		return
+	}
+	if b.delay == 0 {
+		b.delay = backoffMin
+	} else {
+		b.delay *= 2
+	}
+	if b.delay > backoffMax {
+		b.delay = backoffMax
+	}
+}
+
+func (b *backoff) success() {
+	b.delay = 0
+}
+
+// current returns the delay with up to 20% jitter, so a fleet does not retry in
+// lockstep.
+func (b *backoff) current() time.Duration {
+	if b.delay == 0 {
+		return 0
+	}
+	jitter := time.Duration(b.rand.Int63n(int64(b.delay) / 5))
+	return b.delay + jitter
+}
+
+// previousAPIVersion returns the API version to fall back to when the server
+// returns 404 for the current version. This client speaks only one API version,
+// so there is no earlier version to downgrade to; the 404 is logged explicitly
+// instead of inventing a version ladder.
+func previousAPIVersion(_ string) string {
+	return ""
+}
 
 // Message is a single Landscape protocol message (a bpickle dict).
 type Message map[string]any
@@ -63,6 +122,14 @@ type Exchange struct {
 	handlers   map[string][]func(ctx context.Context, msg Message)
 	insecureID string        // guarded by mu; updated from set-id messages
 	wake       chan struct{} // buffered(1); written by TriggerExchange
+	// spool persists the pending queue across restarts. nil disables persistence
+	// (used by tests that do not exercise durability).
+	spool *spool
+	// dispatchCtx is the daemon-lifetime context used to run inbound message
+	// handlers. Handler lifetime must not be tied to the exchange cycle:
+	// manager.Runner dispatches into a goroutine and returns immediately, so a
+	// per-exchange context would be cancelled while the operation is still running.
+	dispatchCtx context.Context
 }
 
 // New creates an Exchange.
@@ -73,6 +140,34 @@ func New(cfg *config.Config, store *persist.Store, tc *transport.Client) *Exchan
 		transport: tc,
 		handlers:  make(map[string][]func(ctx context.Context, msg Message)),
 		wake:      make(chan struct{}, 1),
+	}
+}
+
+// SetSpool enables durable persistence of the pending queue to the given path.
+// The queue is a separate file from state.json so a queue write can never touch
+// SecureID or the outbound sequence number.
+func (e *Exchange) SetSpool(path string) {
+	e.spool = newSpool(path)
+}
+
+// persistQueue bounds and writes the queue. Called after every mutation so an
+// unexpected restart loses at most the messages queued since the last exchange.
+func (e *Exchange) persistQueue() {
+	if e.spool == nil {
+		return
+	}
+	e.mu.Lock()
+	kept, dropped := enforceQueueBound(e.pending)
+	e.pending = kept
+	snapshot := make([]Message, len(kept))
+	copy(snapshot, kept)
+	e.mu.Unlock()
+
+	if dropped > 0 {
+		slog.Warn("exchange: queue full, dropped oldest telemetry messages, operation results retained", "dropped", dropped)
+	}
+	if err := e.spool.save(snapshot); err != nil {
+		slog.Warn("exchange: cannot save spool", "error", err)
 	}
 }
 
@@ -98,7 +193,7 @@ func (e *Exchange) InsecureID() string {
 func (e *Exchange) Run(ctx context.Context) error {
 	state, err := e.store.Load()
 	if err != nil {
-		return fmt.Errorf("exchange: loading state: %w", err)
+		return fmt.Errorf("exchange: cannot load state: %w", err)
 	}
 
 	var timer *time.Timer
@@ -112,15 +207,52 @@ func (e *Exchange) Run(ctx context.Context) error {
 	// immediately (i.e. if already registered from a previous run).
 	e.mu.Lock()
 	e.insecureID = state.InsecureID
+	e.dispatchCtx = ctx
 	e.mu.Unlock()
+
+	// Restore any messages queued before the last restart, prepending them so
+	// they are sent before newly generated telemetry.
+	if e.spool != nil {
+		restored, err := e.spool.load()
+		if err != nil {
+			slog.Warn("exchange: cannot load spool", "error", err)
+		} else if len(restored) > 0 {
+			e.mu.Lock()
+			e.pending = append(restored, e.pending...)
+			e.mu.Unlock()
+			slog.Info("exchange: restored queued messages from the spool", "count", len(restored))
+		}
+	}
+
+	bo := newBackoff()
 
 	for {
 		prevSecureID := state.SecureID
-		if err := e.performExchange(ctx, state); err != nil {
-			log.Printf("exchange: exchange failed: %v", err)
+		err := e.performExchange(ctx, state)
+		// Persist after every exchange attempt: performExchange re-queues on
+		// transport failure and on a partial server ACK, so this covers both the
+		// success and error paths.
+		e.persistQueue()
+		if err != nil {
+			slog.Warn("exchange: exchange failed", "error", err)
+			var httpErr *transport.HTTPError
+			if errors.As(err, &httpErr) {
+				if httpErr.StatusCode == 404 {
+					// An older server does not know this API version. Python drops
+					// to the previous version rather than failing permanently.
+					if downgraded := previousAPIVersion(apiVersion); downgraded != "" {
+						slog.Warn("exchange: server returned 404, downgrading API", "from", apiVersion, "to", downgraded)
+					} else {
+						slog.Warn("exchange: server returned 404 for unknown API version, no earlier version to downgrade to", "api_version", apiVersion)
+					}
+				}
+				bo.failure(httpErr.StatusCode)
+			}
+		} else {
+			bo.success()
 		}
 		e.mu.Lock()
-		hasPending := len(e.pending) > 0
+		hasUrgent := e.hasUrgentPendingLocked()
 		e.mu.Unlock()
 
 		justRegistered := prevSecureID == "" && state.SecureID != ""
@@ -129,8 +261,16 @@ func (e *Exchange) Run(ctx context.Context) error {
 		// polls quickly after the server processes the registration request.
 		// Also use urgent interval immediately after registration so device
 		// info is delivered without waiting 15 minutes.
-		if hasPending || state.SecureID == "" || justRegistered {
+		if hasUrgent || state.SecureID == "" || justRegistered {
 			interval = e.cfg.UrgentExchangeInterval
+		}
+
+		// Apply the backoff after the urgent-interval selection: a server
+		// returning 503 should not be polled at the urgent interval just because
+		// an operation result is queued.
+		if d := bo.current(); d > interval {
+			slog.Warn("exchange: backing off after server errors", "duration", d)
+			interval = d
 		}
 
 		if timer == nil {
@@ -154,17 +294,48 @@ func (e *Exchange) Run(ctx context.Context) error {
 			graceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := e.performExchange(graceCtx, state); err != nil {
-				log.Printf("exchange: final drain exchange failed: %v", err)
+				slog.Warn("exchange: final drain exchange failed", "error", err)
 			}
+			// Persist whatever remains so a shutdown (including a snap refresh)
+			// does not drop unsent messages.
+			e.persistQueue()
 			return nil
 		}
 	}
 }
 
-// Send enqueues a message for the next exchange and wakes the exchange loop
-// so the message is delivered promptly rather than waiting for the next timer tick.
-// Safe to call from multiple goroutines.
+// isUrgentType reports whether a message must not wait for the next scheduled
+// exchange. The server blocks on operation results.
+func isUrgentType(msgType string) bool {
+	return msgType == "operation-result"
+}
+
+// hasUrgentPendingLocked reports whether the queue holds a message that should
+// shorten the next exchange interval. Caller must hold e.mu.
+func (e *Exchange) hasUrgentPendingLocked() bool {
+	for _, m := range e.pending {
+		t, _ := m["type"].(string)
+		if isUrgentType(t) {
+			return true
+		}
+	}
+	return false
+}
+
+// Send enqueues a message for the next scheduled exchange. It does NOT wake the
+// exchange loop: plugin telemetry that triggered an exchange per message made
+// exchange-interval meaningless — measured 60x the configured rate on a device
+// with memory-info at 15s. Matches Python's send_message(urgent=False) default.
 func (e *Exchange) Send(_ context.Context, msg Message) error {
+	e.mu.Lock()
+	e.pending = append(e.pending, msg)
+	e.mu.Unlock()
+	return nil
+}
+
+// SendUrgent enqueues a message and wakes the exchange loop immediately. Use it
+// only for messages the server is waiting on, such as operation results.
+func (e *Exchange) SendUrgent(_ context.Context, msg Message) error {
 	e.mu.Lock()
 	e.pending = append(e.pending, msg)
 	e.mu.Unlock()
@@ -193,7 +364,7 @@ func (e *Exchange) sendOperationResult(ctx context.Context, operationID int64, s
 	if resultCode != nil {
 		msg["result-code"] = *resultCode
 	}
-	return e.Send(ctx, msg)
+	return e.SendUrgent(ctx, msg)
 }
 
 // SendResult enqueues an operation-result message.
@@ -204,6 +375,15 @@ func (e *Exchange) SendResult(ctx context.Context, operationID int64, status int
 // SendResultCode enqueues an operation-result message with a result-code field.
 func (e *Exchange) SendResultCode(ctx context.Context, operationID int64, status int, resultCode int64, output string) error {
 	return e.sendOperationResult(ctx, operationID, status, &resultCode, output)
+}
+
+func (e *Exchange) invokeHandler(ctx context.Context, messageType string, handler func(ctx context.Context, msg Message), msg Message) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Error("exchange: handler panicked", "type", messageType, "panic", rec, "stack", string(debug.Stack()))
+		}
+	}()
+	handler(ctx, msg)
 }
 
 // performExchange executes a single exchange with the Landscape server.
@@ -227,17 +407,20 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			"access_group":          e.cfg.AccessGroup,
 		}
 		e.mu.Lock()
-		e.pending = append([]Message{regMsg}, e.pending...)
+		e.pending = slices.Insert(e.pending, 0, regMsg)
 		e.mu.Unlock()
-		log.Printf("exchange: sending registration request (account=%q title=%q key-set=%v)",
-			e.cfg.AccountName, e.cfg.ComputerTitle, e.cfg.RegistrationKey != "")
+		slog.Info("exchange: sending registration request",
+			"account", e.cfg.AccountName, "title", e.cfg.ComputerTitle, "key_set", e.cfg.RegistrationKey != "")
 	}
 
-	// Take a snapshot of pending under lock and clear the queue.
+	// Drain at most maxMessagesPerExchange, matching Python's max_messages. A
+	// restored spool after a long outage would otherwise produce one enormous
+	// request.
 	e.mu.Lock()
-	snapshot := make([]Message, len(e.pending))
-	copy(snapshot, e.pending)
-	e.pending = nil
+	n := min(len(e.pending), maxMessagesPerExchange)
+	snapshot := make([]Message, n)
+	copy(snapshot, e.pending[:n])
+	e.pending = e.pending[n:]
 	e.mu.Unlock()
 
 	// Filter out message types the server has not declared it handles.
@@ -262,7 +445,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		}
 		if len(filtered) != len(snapshot) {
 			dropped := len(snapshot) - len(filtered)
-			log.Printf("exchange: dropped %d message(s) with types not in server accepted list", dropped)
+			slog.Warn("exchange: dropped messages with types not in server accepted list", "dropped", dropped)
 		}
 		snapshot = filtered
 	}
@@ -281,7 +464,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 				outTypes = append(outTypes, t)
 			}
 		}
-		log.Printf("exchange: sending %d message(s): %v", len(snapshot), outTypes)
+		slog.Debug("exchange: sending messages", "count", len(snapshot), "types", outTypes)
 	}
 
 	// Assemble the exchange payload.
@@ -303,7 +486,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			clientTypes = append(clientTypes, t)
 		}
 		e.mu.Unlock()
-		sort.Strings(clientTypes)
+		slices.Sort(clientTypes)
 		typesAny := make([]any, len(clientTypes))
 		for i, t := range clientTypes {
 			typesAny[i] = t
@@ -314,7 +497,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	// Marshal payload.
 	body, err := bpickle.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("exchange: marshaling payload: %w", err)
+		return fmt.Errorf("exchange: cannot marshal payload: %w", err)
 	}
 
 	// Build request headers.
@@ -335,15 +518,15 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	if err != nil {
 		// Re-queue the snapshot so messages are not lost on transport failure.
 		e.mu.Lock()
-		e.pending = append(snapshot, e.pending...)
+		e.pending = slices.Insert(e.pending, 0, snapshot...)
 		e.mu.Unlock()
-		return fmt.Errorf("exchange: posting to server: %w", err)
+		return fmt.Errorf("exchange: cannot post to server: %w", err)
 	}
 
 	// Decode response.
 	rawResponse, err := bpickle.Unmarshal(responseBytes)
 	if err != nil {
-		return fmt.Errorf("exchange: unmarshaling response: %w", err)
+		return fmt.Errorf("exchange: cannot unmarshal response: %w", err)
 	}
 	response, ok := rawResponse.(map[string]any)
 	if !ok {
@@ -352,13 +535,15 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 
 	// Log the inbound messages for debugging.
 	inbound := extractMessages(response)
-	log.Printf("exchange: client-seq=%d server-client-seq=%d server-ack=%v",
-		state.OutboundSequence, state.NextExpectedFromServer, response["next-expected-sequence"])
+	slog.Debug("exchange: sequence status",
+		"client_sequence", state.OutboundSequence,
+		"server_client_sequence", state.NextExpectedFromServer,
+		"server_ack", response["next-expected-sequence"])
 	if len(inbound) == 0 {
-		log.Printf("exchange: server response: no messages")
+		slog.Debug("exchange: server response: no messages")
 	} else {
 		for _, m := range inbound {
-			log.Printf("exchange: server message: type=%q", m["type"])
+			slog.Debug("exchange: server message", "type", m["type"])
 		}
 	}
 
@@ -373,16 +558,15 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	// If the server's ACK is below what we just sent, re-enqueue un-ACK'd messages
 	// so they are retransmitted at the correct sequence on the next exchange.
 	if serverACK < sentUpTo {
-		nAcked := int(serverACK - state.OutboundSequence)
-		if nAcked < 0 {
-			nAcked = 0
-		}
+		nAcked := max(int(serverACK-state.OutboundSequence), 0)
 		if nAcked < len(snapshot) {
 			e.mu.Lock()
-			e.pending = append(snapshot[nAcked:], e.pending...)
+			e.pending = slices.Insert(e.pending, 0, snapshot[nAcked:]...)
 			e.mu.Unlock()
-			log.Printf("exchange: server ACK'd %d/%d messages (our seq=%d, server wants=%d); re-queuing %d",
-				nAcked, len(snapshot), state.OutboundSequence, serverACK, len(snapshot)-nAcked)
+			slog.Info("exchange: server ACK'd fewer messages than sent, re-queuing",
+				"acked", nAcked, "sent", len(snapshot),
+				"our_sequence", state.OutboundSequence, "server_expects", serverACK,
+				"requeued", len(snapshot)-nAcked)
 		}
 	}
 	state.OutboundSequence = serverACK
@@ -398,7 +582,13 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	}
 
 	// Process inbound messages: special types are handled here; others go to subscribers.
-	handlerEG, handlerCtx := errgroup.WithContext(ctx)
+	e.mu.Lock()
+	handlerCtx := e.dispatchCtx
+	e.mu.Unlock()
+	if handlerCtx == nil {
+		// performExchange called outside Run (tests, final drain).
+		handlerCtx = context.Background()
+	}
 	for _, msg := range inbound {
 		msgType, _ := msg["type"].(string)
 
@@ -430,7 +620,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			e.mu.Lock()
 			e.insecureID = state.InsecureID
 			e.mu.Unlock()
-			log.Printf("exchange: registered successfully (secure-id=%q insecure-id=%q)", state.SecureID, state.InsecureID)
+			slog.Info("exchange: registered successfully", "secure_id", state.SecureID, "insecure_id", state.InsecureID)
 		case "accepted-types":
 			if v, ok := msg["types"]; ok {
 				if l, ok := v.([]any); ok {
@@ -445,7 +635,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 					}
 					state.AcceptedTypes = types
 					state.AcceptedTypesHash = hashTypes(types)
-					log.Printf("exchange: accepted-types: %d types", len(types))
+					slog.Info("exchange: received accepted-types", "count", len(types))
 				}
 			}
 		case "resynchronize":
@@ -460,23 +650,23 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 				resyncAck["operation-id"] = opid
 			}
 			e.mu.Lock()
-			e.pending = append([]Message{resyncAck}, e.pending...)
+			e.pending = slices.Insert(e.pending, 0, resyncAck)
 			e.mu.Unlock()
-			log.Printf("exchange: received resynchronize from server, queuing ack")
+			slog.Info("exchange: received resynchronize from server, queuing ack")
 		case "unknown-id":
-			log.Printf("exchange: server does not recognize our identity, clearing IDs to re-register")
+			slog.Warn("exchange: server does not recognize our identity, clearing IDs to re-register")
 			state.SecureID = ""
 			state.InsecureID = ""
 		case "registration":
 			info, _ := msgBytes(msg["info"])
 			switch info {
 			case "unknown-account", "max-pending-computers":
-				log.Printf("exchange: registration failed: %s", info)
+				slog.Warn("exchange: registration failed", "info", info)
 			default:
-				log.Printf("exchange: registration pending (info=%q)", info)
+				slog.Info("exchange: registration pending", "info", info)
 			}
 		case "registration-complete":
-			log.Printf("exchange: registration complete")
+			slog.Info("exchange: registration complete")
 		}
 
 		if !isSpecialMessageType(msgType) {
@@ -486,35 +676,13 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 			e.mu.Unlock()
 
 			if len(handlers) == 0 {
-				log.Printf("exchange: no handler for message type %q", msgType)
+				slog.Warn("exchange: no handler for message type", "type", msgType)
 				continue
 			}
 			for _, h := range handlers {
-				h := h
-				msg := msg
-				handlerEG.Go(func() (handlerErr error) {
-					defer func() {
-						if rec := recover(); rec != nil {
-							log.Printf("exchange: handler panic type=%q: %v\n%s", msgType, rec, debug.Stack())
-							handlerErr = fmt.Errorf("handler panic for %q: %v", msgType, rec)
-						}
-					}()
-					h(handlerCtx, msg)
-					if err := handlerCtx.Err(); err != nil {
-						handlerErr = fmt.Errorf("handler for %q stopped: %w", msgType, err)
-					}
-					return handlerErr
-				})
+				e.invokeHandler(handlerCtx, msgType, h, msg)
 			}
 		}
-	}
-	if err := handlerEG.Wait(); err != nil {
-		if errors.Is(err, context.Canceled) {
-			log.Printf("exchange: handler group canceled: %v", err)
-		} else {
-			log.Printf("exchange: handler group error: %v", err)
-		}
-		return fmt.Errorf("exchange: waiting for handlers: %w", err)
 	}
 
 	// Persist updated state via a serialized read-modify-write, preserving any
@@ -524,9 +692,7 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		if mergedPluginState == nil {
 			mergedPluginState = make(map[string]json.RawMessage)
 		}
-		for k, v := range current.PluginState {
-			mergedPluginState[k] = v
-		}
+		maps.Copy(mergedPluginState, current.PluginState)
 
 		current.SecureID = state.SecureID
 		current.InsecureID = state.InsecureID
@@ -540,7 +706,16 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 
 		return nil
 	}); err != nil {
-		return fmt.Errorf("exchange: saving state: %w", err)
+		return fmt.Errorf("exchange: cannot save state: %w", err)
+	}
+
+	// If messages are still queued (capped backlog or a re-queue), wake the loop
+	// so the backlog drains promptly rather than one batch per interval.
+	e.mu.Lock()
+	backlog := len(e.pending) > 0
+	e.mu.Unlock()
+	if backlog {
+		e.TriggerExchange()
 	}
 
 	return nil

@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +38,7 @@ type usersState struct {
 }
 
 type UserMonitor struct {
+	heartbeatSource
 	passwdPath string
 	groupPath  string
 	interval   time.Duration
@@ -53,10 +54,16 @@ func NewUsers() *UserMonitor {
 
 func (p *UserMonitor) Name() string { return "users" }
 
+func (p *UserMonitor) Interval() time.Duration { return p.interval }
+
 func (p *UserMonitor) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved usersState
 	if state != nil {
-		_ = state.GetPluginState(&saved)
+		if err := state.GetPluginState(&saved); err != nil {
+			// Zero state is not equivalent to "no changes yet": for users it
+			// re-sends every account as a create.
+			slog.Warn("users: cannot load state, treating as first run", "error", err)
+		}
 	}
 	if saved.Users == nil {
 		saved.Users = make(map[string]userRecord)
@@ -65,46 +72,44 @@ func (p *UserMonitor) Run(ctx context.Context, sink exchange.MessageSink, state 
 		saved.Groups = make(map[string]groupRecord)
 	}
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			newUsers, err := p.parsePasswd()
-			if err != nil {
-				log.Printf("users: parsing passwd: %v", err)
-				newUsers = make(map[string]userRecord)
-			}
-			newGroups, err := p.parseGroup(newUsers)
-			if err != nil {
-				log.Printf("users: parsing group: %v", err)
-				newGroups = make(map[string]groupRecord)
-			}
-			msg := buildUsersDiff(saved.Users, newUsers, saved.Groups, newGroups)
-			if msg != nil {
-				msg["type"] = "users"
-				if err := sink.Send(ctx, msg); err != nil {
-					log.Printf("users: send: %v", err)
-				}
-			}
-			saved.Users = newUsers
-			saved.Groups = newGroups
-			if state != nil {
-				if err := state.SetPluginState(saved); err != nil {
-					log.Printf("users: saving state: %v", err)
-				}
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		newUsers, err := p.parsePasswd()
+		if err != nil {
+			// An unreadable source file means "unknown", never "empty":
+			// diffing against an empty map tells the server to delete every
+			// user, and persisting it re-creates them all on the next tick.
+			slog.Warn("users: cannot parse passwd, skipping tick", "error", err)
+			return
+		}
+		newGroups, err := p.parseGroup(newUsers)
+		if err != nil {
+			slog.Warn("users: cannot parse group, skipping tick", "error", err)
+			return
+		}
+		msg := buildUsersDiff(saved.Users, newUsers, saved.Groups, newGroups)
+		if msg != nil {
+			msg["type"] = "users"
+			if err := sink.Send(ctx, msg); err != nil {
+				slog.Warn("users: send failed", "error", err)
 			}
 		}
-	}
+		saved.Users = newUsers
+		saved.Groups = newGroups
+		if state != nil {
+			if err := state.SetPluginState(saved); err != nil {
+				slog.Error("users: cannot save state", "error", err)
+			}
+		}
+	})
+	return nil
 }
 
 func (p *UserMonitor) parsePasswd() (map[string]userRecord, error) {
 	users := make(map[string]userRecord)
 	f, err := os.Open(p.passwdPath)
 	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", p.passwdPath, err)
+		return nil, fmt.Errorf("cannot open %s: %w", p.passwdPath, err)
 	}
 	defer func() {
 		_ = f.Close()
@@ -162,7 +167,7 @@ func (p *UserMonitor) parseGroup(users map[string]userRecord) (map[string]groupR
 	groups := make(map[string]groupRecord)
 	f, err := os.Open(p.groupPath)
 	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", p.groupPath, err)
+		return nil, fmt.Errorf("cannot open %s: %w", p.groupPath, err)
 	}
 	defer func() {
 		_ = f.Close()
@@ -190,7 +195,7 @@ func (p *UserMonitor) parseGroup(users map[string]userRecord) (map[string]groupR
 		}
 		var members []string
 		if parts[3] != "" {
-			for _, m := range strings.Split(parts[3], ",") {
+			for m := range strings.SplitSeq(parts[3], ",") {
 				m = strings.TrimSpace(m)
 				if userSet[m] {
 					members = append(members, m)
@@ -200,7 +205,7 @@ func (p *UserMonitor) parseGroup(users map[string]userRecord) (map[string]groupR
 		if members == nil {
 			members = []string{}
 		}
-		sort.Strings(members)
+		slices.Sort(members)
 		groups[groupName] = groupRecord{
 			Name:    groupName,
 			GID:     gid,
@@ -237,7 +242,7 @@ func buildUsersDiff(
 		msg["update-users"] = updateUsers
 	}
 	if len(deleteUsers) > 0 {
-		sort.Strings(deleteUsers)
+		slices.Sort(deleteUsers)
 		msg["delete-users"] = deleteUsers
 	}
 
@@ -276,11 +281,11 @@ func buildUsersDiff(
 				}
 			}
 			if len(added) > 0 {
-				sort.Strings(added)
+				slices.Sort(added)
 				createGroupMembers[groupName] = added
 			}
 			if len(removed) > 0 {
-				sort.Strings(removed)
+				slices.Sort(removed)
 				deleteGroupMembers[groupName] = removed
 			}
 		}
@@ -298,7 +303,7 @@ func buildUsersDiff(
 		msg["update-groups"] = updateGroups
 	}
 	if len(deleteGroups) > 0 {
-		sort.Strings(deleteGroups)
+		slices.Sort(deleteGroups)
 		msg["delete-groups"] = deleteGroups
 	}
 	if len(createGroupMembers) > 0 {

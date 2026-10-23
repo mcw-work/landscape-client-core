@@ -146,6 +146,47 @@ func TestCPUUsage_ContextCancel(t *testing.T) {
 	}
 }
 
+// TestCPUUsage_BatchedMessageShapeIsUnchanged asserts batching is additive: the
+// same field carries N tuples instead of 1, with identical tuple shape.
+func TestCPUUsage_BatchedMessageShapeIsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	statPath := filepath.Join(dir, "stat")
+	writeFixture(t, statPath, "cpu  100 0 100 800 0 0 0 0 0 0\n")
+
+	p := &CPUUsage{
+		procStatPath: statPath,
+		interval:     5 * time.Millisecond,
+		sendInterval: 20 * time.Millisecond,
+	}
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+
+	// A static /proc/stat yields usage<0 forever, so nudge the counters once to
+	// produce a real point; the accumulator then drains it after the window.
+	time.Sleep(20 * time.Millisecond)
+	writeFixture(t, statPath, "cpu  200 0 200 1400 0 0 0 0 0 0\n")
+
+	msgs := waitForMessages(t, sink, 1, 1*time.Second)
+	cancel()
+	<-errCh
+
+	points, ok := msgs[0]["cpu-usages"].([]any)
+	if !ok {
+		t.Fatalf("cpu-usages: want []any, got %T", msgs[0]["cpu-usages"])
+	}
+	if len(points) == 0 {
+		t.Fatal("no points in the batched message")
+	}
+	if _, ok := points[0].(bpickle.Tuple); !ok {
+		t.Errorf("point 0: want bpickle.Tuple, got %T", points[0])
+	}
+}
+
 // ---- MemoryInfo tests -------------------------------------------------------
 
 const meminfoFixture = `MemTotal:       16384 kB
@@ -316,5 +357,43 @@ func TestLoadAverage_ContextCancel(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Error("Run did not return after context cancel")
+	}
+}
+
+func TestCounterDelta_NormalIncrement(t *testing.T) {
+	if got := counterDelta(2000, 1000); got != 1000 {
+		t.Errorf("want 1000, got %d", got)
+	}
+}
+
+// TestCounterDelta_32BitRollover: on armhf the kernel counter wraps at 2^32, so
+// a negative raw delta with a previous value near MaxUint32 is a wrap, not a
+// reset. Clamping it to zero loses 4 GiB of traffic per interface per wrap.
+func TestCounterDelta_32BitRollover(t *testing.T) {
+	const maxUint32 = int64(1) << 32
+
+	prev := maxUint32 - 1000 // 4294966296
+	now := int64(500)        // wrapped
+
+	want := int64(1500) // 1000 to the wrap point, then 500 more
+	if got := counterDelta(now, prev); got != want {
+		t.Errorf("want %d, got %d", want, got)
+	}
+}
+
+// TestCounterDelta_GenuineReset: an interface re-created from scratch has a low
+// previous value, so a negative delta there is a reset and must still clamp.
+func TestCounterDelta_GenuineReset(t *testing.T) {
+	prev := int64(5000)
+	now := int64(10)
+
+	if got := counterDelta(now, prev); got != 0 {
+		t.Errorf("a genuine counter reset should clamp to 0, got %d", got)
+	}
+}
+
+func TestCounterDelta_NoChange(t *testing.T) {
+	if got := counterDelta(1000, 1000); got != 0 {
+		t.Errorf("want 0, got %d", got)
 	}
 }

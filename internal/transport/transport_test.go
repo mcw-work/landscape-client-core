@@ -389,3 +389,29 @@ func TestPost_UserAgentOverride(t *testing.T) {
 		t.Errorf("User-Agent = %q, want %q", gotUA, "custom-agent")
 	}
 }
+
+// TestGet_StalledServerTimesOut asserts a server that accepts and then sends
+// nothing does not hang the caller indefinitely. transport_test is an external
+// package, so the totalTimeout field is unreachable; this exercises the timeout
+// through the exported Get method instead.
+func TestGet_StalledServerTimesOut(t *testing.T) {
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		<-block
+	}))
+	defer srv.Close()
+	defer close(block)
+
+	c := newTestClient(t, transport.Config{TotalTimeout: 300 * time.Millisecond})
+
+	start := time.Now()
+	_, err := c.Get(context.Background(), srv.URL, nil)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("want a timeout error, got nil")
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("request took %v; the total timeout was not applied", elapsed)
+	}
+}

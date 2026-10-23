@@ -41,12 +41,12 @@ func TestOperationContextManager_ConcurrentCancelMultipleOps(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(total)
 
-	for i := 0; i < total; i++ {
+	for i := range total {
 		opID := int64(i + 1)
 		mgr.Register(opID, wg.Done)
 	}
 
-	for i := 0; i < total; i++ {
+	for i := range total {
 		opID := int64(i + 1)
 		go mgr.Cancel(opID)
 	}

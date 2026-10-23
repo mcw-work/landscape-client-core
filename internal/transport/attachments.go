@@ -37,7 +37,7 @@ func NewAttachmentFetcher(client *Client, msgURL string, store *persist.Store) *
 func (f *TransportAttachmentFetcher) FetchAttachment(ctx context.Context, id int64) ([]byte, error) {
 	state, err := f.store.Load()
 	if err != nil {
-		return nil, fmt.Errorf("attachments: loading state: %w", err)
+		return nil, fmt.Errorf("attachments: cannot load state: %w", err)
 	}
 
 	attachURL := f.baseURL + strconv.FormatInt(id, 10)

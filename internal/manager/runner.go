@@ -3,7 +3,7 @@ package manager
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -67,7 +67,7 @@ func (r *Runner) Register() {
 		r.source.Subscribe(handler.MessageType(), func(ctx context.Context, msg exchange.Message) {
 			if err := r.sem.Acquire(ctx, 1); err != nil {
 				opID, _ := msg["operation-id"].(int64)
-				log.Printf("manager: handler %s semaphore acquire error: %v", handler.MessageType(), err)
+				slog.Warn("manager: handler semaphore acquire failed", "handler", handler.MessageType(), "error", err)
 				_ = r.result.SendResult(ctx, opID, exchange.StatusFailed, fmt.Sprintf("semaphore acquire failed: %v", err))
 				return
 			}
@@ -79,13 +79,13 @@ func (r *Runner) Register() {
 				defer func() {
 					if rec := recover(); rec != nil {
 						opID, _ := msg["operation-id"].(int64)
-						log.Printf("manager: handler %s panicked: %v", handler.MessageType(), rec)
+						slog.Error("manager: handler panicked", "handler", handler.MessageType(), "panic", rec)
 						_ = r.result.SendResult(ctx, opID, exchange.StatusFailed, fmt.Sprintf("panic: %v", rec))
 					}
 				}()
 
 				if err := handler.Handle(ctx, msg, r.result); err != nil {
-					log.Printf("manager: handler %s error: %v", handler.MessageType(), err)
+					slog.Warn("manager: handler error", "handler", handler.MessageType(), "error", err)
 				}
 			}()
 		})

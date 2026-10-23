@@ -358,3 +358,31 @@ func TestSnapServices_ContextCancel(t *testing.T) {
 		t.Error("Run did not return after context cancel")
 	}
 }
+
+// ─── RebootRequired tests ─────────────────────────────────────────────────────
+
+// TestRebootRequired_ReportsImmediately asserts the plugin does not wait a full
+// interval before its first report, matching Python's run_immediately = True.
+// On a device that reboots often, the server would otherwise wait 5 minutes to
+// learn a reboot is still required.
+func TestRebootRequired_ReportsImmediately(t *testing.T) {
+	mock := &snapd.MockClient{RebootRequired: true}
+
+	p := NewRebootRequired(mock)
+	p.interval = time.Hour // must not be waited for
+
+	sink := &mockSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx, sink, nil) }()
+
+	msgs := waitForMessages(t, sink, 1, 1*time.Second)
+	cancel()
+	<-errCh
+
+	if len(msgs) == 0 {
+		t.Fatal("no message before the first interval elapsed")
+	}
+}

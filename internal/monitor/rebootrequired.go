@@ -2,7 +2,7 @@ package monitor
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
@@ -21,6 +21,7 @@ type rebootState struct {
 // changes from the previously reported value. Message type and fields match the
 // Python rebootrequired.py plugin exactly.
 type RebootRequiredPlugin struct {
+	heartbeatSource
 	interval time.Duration
 	snapd    snapd.Client
 }
@@ -36,6 +37,8 @@ func NewRebootRequired(client snapd.Client) *RebootRequiredPlugin {
 // Name returns the Landscape message type string.
 func (p *RebootRequiredPlugin) Name() string { return "reboot-required-info" }
 
+func (p *RebootRequiredPlugin) Interval() time.Duration { return p.interval }
+
 // Run starts the periodic reboot-required check loop. A message is emitted
 // only when the reboot flag changes from its previously reported value.
 // The last reported value is persisted via state so it survives restarts.
@@ -50,35 +53,38 @@ func (p *RebootRequiredPlugin) Run(ctx context.Context, sink exchange.MessageSin
 		}
 	}
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			flag, err := p.snapd.GetRebootRequired(ctx)
-			if err != nil {
-				log.Printf("reboot-required: %v", err)
-				continue
-			}
-			if prevFlag != nil && *prevFlag == flag {
-				continue // no change, skip
-			}
-			// Value changed (or first sample): update tracker and persist.
-			f := flag
-			prevFlag = &f
-			if state != nil {
-				_ = state.SetPluginState(rebootState{Initialized: true, Flag: flag})
-			}
-			msg := exchange.Message{
-				"type":     "reboot-required-info",
-				"flag":     flag,
-				"packages": []any{},
-			}
-			if err := sink.Send(ctx, msg); err != nil {
-				log.Printf("reboot-required: send: %v", err)
+	// Python's rebootrequired sets run_immediately = True: a device that has just
+	// rebooted should not wait 5 minutes to tell the server it still needs one.
+	runTicker(ctx, p.interval, true, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+		flag, err := p.snapd.GetRebootRequired(callCtx)
+		cancel()
+		if err != nil {
+			slog.Warn("reboot-required: cannot query snapd", "error", err)
+			return
+		}
+		if prevFlag != nil && *prevFlag == flag {
+			return // no change, skip
+		}
+		// Value changed (or first sample): persist, then update the tracker
+		// only on a successful save so a failure is re-detected next tick.
+		if state != nil {
+			if err := state.SetPluginState(rebootState{Initialized: true, Flag: flag}); err != nil {
+				slog.Error("reboot-required: cannot save state, will retry next tick", "error", err)
+				return
 			}
 		}
-	}
+		f := flag
+		prevFlag = &f
+		msg := exchange.Message{
+			"type":     "reboot-required-info",
+			"flag":     flag,
+			"packages": []any{},
+		}
+		if err := sink.Send(ctx, msg); err != nil {
+			slog.Warn("reboot-required: send failed", "error", err)
+		}
+	})
+	return nil
 }

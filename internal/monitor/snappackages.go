@@ -2,7 +2,7 @@ package monitor
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/canonical/landscape-client-core/internal/exchange"
@@ -14,6 +14,7 @@ import (
 // A full list is sent on every tick (not a diff). Message type and fields
 // match the Python snaps plugin exactly.
 type SnapPackagesPlugin struct {
+	heartbeatSource
 	interval    time.Duration
 	snapdClient snapd.Client
 }
@@ -29,21 +30,18 @@ func NewSnapPackages(client snapd.Client) *SnapPackagesPlugin {
 // Name returns the Landscape message type string.
 func (p *SnapPackagesPlugin) Name() string { return "snaps" }
 
+func (p *SnapPackagesPlugin) Interval() time.Duration { return p.interval }
+
 // Run starts the periodic snap list collection loop. A full installed list is
 // sent on every tick. On snapd error the message is sent with an empty
 // installed list to keep the server in sync.
 func (p *SnapPackagesPlugin) Run(ctx context.Context, sink exchange.MessageSink, _ *persist.PluginStateAccessor) error {
 	p.send(ctx, sink)
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.send(ctx, sink)
-		}
-	}
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		p.send(ctx, sink)
+	})
+	return nil
 }
 
 // SendNow immediately collects and sends the current snap list to sink.
@@ -62,16 +60,18 @@ func (p *SnapPackagesPlugin) send(ctx context.Context, sink exchange.MessageSink
 		},
 	}
 	if err := sink.Send(ctx, msg); err != nil {
-		log.Printf("snaps: send: %v", err)
+		slog.Warn("snaps: send failed", "error", err)
 	}
 }
 
 // collect queries snapd for installed snaps and converts them to the wire
 // format. On error it logs and returns an empty slice.
 func (p *SnapPackagesPlugin) collect(ctx context.Context) []any {
-	snaps, err := p.snapdClient.ListSnaps(ctx)
+	callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+	snaps, err := p.snapdClient.ListSnaps(callCtx)
+	cancel()
 	if err != nil {
-		log.Printf("snaps: listing snaps: %v", err)
+		slog.Warn("snaps: cannot list snaps", "error", err)
 		return []any{}
 	}
 	result := make([]any, 0, len(snaps))

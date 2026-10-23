@@ -10,7 +10,7 @@ package ping
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/url"
 	"sync/atomic"
 	"time"
@@ -28,6 +28,28 @@ type Pinger struct {
 	tc              *transport.Client
 
 	interval atomic.Value
+}
+
+type pingTimer interface {
+	Chan() <-chan time.Time
+	Reset(time.Duration) bool
+	Stop() bool
+}
+
+type systemTimer struct {
+	timer *time.Timer
+}
+
+func (t *systemTimer) Chan() <-chan time.Time {
+	return t.timer.C
+}
+
+func (t *systemTimer) Reset(interval time.Duration) bool {
+	return t.timer.Reset(interval)
+}
+
+func (t *systemTimer) Stop() bool {
+	return t.timer.Stop()
 }
 
 // New returns a Pinger.
@@ -68,13 +90,13 @@ func (p *Pinger) GetInterval() time.Duration {
 
 // Run starts the ping loop. Blocks until ctx is cancelled, then returns nil.
 func (p *Pinger) Run(ctx context.Context) error {
-	for {
-		interval := p.GetInterval()
+	timer := &systemTimer{timer: time.NewTimer(0)}
+	timer.Stop()
+	defer timer.Stop()
 
-		select {
-		case <-ctx.Done():
+	for {
+		if !p.wait(ctx, timer) {
 			return nil
-		case <-time.After(interval):
 		}
 
 		insecureID := p.getInsecureID()
@@ -85,13 +107,23 @@ func (p *Pinger) Run(ctx context.Context) error {
 
 		hasMessages, err := p.doPing(ctx, insecureID)
 		if err != nil {
-			log.Printf("ping: error contacting ping server at %s: %v", p.pingURL, err)
+			slog.Warn("ping: error contacting ping server", "url", p.pingURL, "error", err)
 			continue
 		}
 		if hasMessages {
-			log.Printf("ping: server has messages waiting, triggering urgent exchange")
+			slog.Debug("ping: server has messages waiting, triggering urgent exchange")
 			p.triggerExchange()
 		}
+	}
+}
+
+func (p *Pinger) wait(ctx context.Context, timer pingTimer) bool {
+	timer.Reset(p.GetInterval())
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.Chan():
+		return true
 	}
 }
 
@@ -110,7 +142,7 @@ func (p *Pinger) doPing(ctx context.Context, insecureID string) (bool, error) {
 
 	raw, err := bpickle.Unmarshal(respBytes)
 	if err != nil {
-		return false, fmt.Errorf("decoding response: %w", err)
+		return false, fmt.Errorf("cannot decode response: %w", err)
 	}
 
 	m, ok := raw.(map[string]any)

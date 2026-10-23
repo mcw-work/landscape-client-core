@@ -3,7 +3,7 @@ package monitor
 import (
 	"bufio"
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -30,10 +30,12 @@ type ciSavedState struct {
 }
 
 type ComputerInfo struct {
+	heartbeatSource
 	meminfoPath   string
 	osReleasePath string
 	machineIDPath string
 	snapdClient   snapd.Client
+	getHostname   func() (string, error)
 	interval      time.Duration
 }
 
@@ -43,43 +45,50 @@ func NewComputerInfo(client snapd.Client) *ComputerInfo {
 		osReleasePath: "/etc/os-release",
 		machineIDPath: "/etc/machine-id",
 		snapdClient:   client,
+		getHostname:   os.Hostname,
 		interval:      5 * time.Minute,
 	}
 }
 
 func (p *ComputerInfo) Name() string { return "computer-info" }
 
+func (p *ComputerInfo) Interval() time.Duration { return p.interval }
+
 func (p *ComputerInfo) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var prev ciSavedState
 	if state != nil {
 		if err := state.GetPluginState(&prev); err != nil {
-			log.Printf("computer-info: loading state: %v", err)
+			slog.Warn("computer-info: cannot load state", "error", err)
 		}
 	}
 
 	p.tick(ctx, sink, state, &prev)
 
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.tick(ctx, sink, state, &prev)
-		}
-	}
+	runTicker(ctx, p.interval, false, staggerFor(p.interval), func(ctx context.Context, _ time.Time) {
+		p.beat(p.Name())
+		p.tick(ctx, sink, state, &prev)
+	})
+	return nil
 }
 
 func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor, prev *ciSavedState) {
-	hostname, _ := os.Hostname()
+	getHostname := p.getHostname
+	if getHostname == nil {
+		getHostname = os.Hostname
+	}
+	hostname, hostnameErr := getHostname()
+	if hostnameErr != nil {
+		// Omit the field rather than sending "", which the server reads as
+		// "this device has no hostname".
+		slog.Warn("computer-info: cannot read hostname", "error", hostnameErr)
+	}
 	totalMemMB, totalSwapMB := p.readMeminfo()
 	machineID := p.readMachineID()
 	distID, description, release, codeName := p.readOSRelease()
 	serial, snapModel, brand := p.readSnapAssertions(ctx)
 
 	compMsg := exchange.Message{}
-	if !prev.Initialized || hostname != prev.Hostname {
+	if hostnameErr == nil && (!prev.Initialized || hostname != prev.Hostname) {
 		compMsg["hostname"] = hostname
 	}
 	if !prev.Initialized || totalMemMB != prev.TotalMemory {
@@ -94,7 +103,7 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 	if len(compMsg) > 0 {
 		compMsg["type"] = "computer-info"
 		if err := sink.Send(ctx, compMsg); err != nil {
-			log.Printf("computer-info: send: %v", err)
+			slog.Warn("computer-info: send failed", "error", err)
 		}
 	}
 
@@ -114,7 +123,7 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 	if len(distMsg) > 0 {
 		distMsg["type"] = "distribution-info"
 		if err := sink.Send(ctx, distMsg); err != nil {
-			log.Printf("computer-info: send distribution-info: %v", err)
+			slog.Warn("computer-info: send distribution-info failed", "error", err)
 		}
 	}
 
@@ -133,13 +142,20 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 	if len(snapMsg) > 0 && serial != "" {
 		snapMsg["type"] = "snap-info"
 		if err := sink.Send(ctx, snapMsg); err != nil {
-			log.Printf("computer-info: send snap-info: %v", err)
+			slog.Warn("computer-info: send snap-info failed", "error", err)
 		}
+	}
+
+	// On a failed lookup keep the last known hostname so a transient error does
+	// not churn state or re-send once it recovers.
+	storedHostname := prev.Hostname
+	if hostnameErr == nil {
+		storedHostname = hostname
 	}
 
 	next := ciSavedState{
 		Initialized:   true,
-		Hostname:      hostname,
+		Hostname:      storedHostname,
 		TotalMemory:   totalMemMB,
 		TotalSwap:     totalSwapMB,
 		MachineID:     machineID,
@@ -154,7 +170,7 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 	*prev = next
 	if state != nil {
 		if err := state.SetPluginState(next); err != nil {
-			log.Printf("computer-info: saving state: %v", err)
+			slog.Error("computer-info: cannot save state", "error", err)
 		}
 	}
 }
@@ -162,7 +178,7 @@ func (p *ComputerInfo) tick(ctx context.Context, sink exchange.MessageSink, stat
 func (p *ComputerInfo) readMeminfo() (totalMemMB, totalSwapMB int64) {
 	f, err := os.Open(p.meminfoPath)
 	if err != nil {
-		log.Printf("computer-info: opening %s: %v", p.meminfoPath, err)
+		slog.Warn("computer-info: cannot open meminfo", "path", p.meminfoPath, "error", err)
 		return
 	}
 	defer func() {
@@ -192,7 +208,7 @@ func (p *ComputerInfo) readMeminfo() (totalMemMB, totalSwapMB int64) {
 func (p *ComputerInfo) readMachineID() string {
 	data, err := os.ReadFile(p.machineIDPath)
 	if err != nil {
-		log.Printf("computer-info: reading machine-id: %v", err)
+		slog.Warn("computer-info: cannot read machine-id", "error", err)
 		return ""
 	}
 	return strings.TrimSpace(string(data))
@@ -201,8 +217,8 @@ func (p *ComputerInfo) readMachineID() string {
 func (p *ComputerInfo) readOSRelease() (distributorID, description, release, codeName string) {
 	f, err := os.Open(p.osReleasePath)
 	if err != nil {
-		log.Printf("computer-info: opening %s: %v", p.osReleasePath, err)
-		return
+		slog.Warn("computer-info: cannot open os-release", "path", p.osReleasePath, "error", err)
+		return distributorID, description, release, codeName
 	}
 	defer func() {
 		_ = f.Close()
@@ -210,12 +226,12 @@ func (p *ComputerInfo) readOSRelease() (distributorID, description, release, cod
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
+		rawKey, rawValue, ok := strings.Cut(line, "=")
+		if !ok {
 			continue
 		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
+		key := strings.TrimSpace(rawKey)
+		value := strings.TrimSpace(rawValue)
 		value = strings.Trim(value, `"`)
 		switch key {
 		case "NAME":
@@ -228,16 +244,18 @@ func (p *ComputerInfo) readOSRelease() (distributorID, description, release, cod
 			codeName = value
 		}
 	}
-	return
+	return distributorID, description, release, codeName
 }
 
 func (p *ComputerInfo) readSnapAssertions(ctx context.Context) (serial, model, brand string) {
 	if p.snapdClient == nil {
 		return
 	}
-	assertions, err := p.snapdClient.GetAssertions(ctx)
+	callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
+	assertions, err := p.snapdClient.GetAssertions(callCtx)
+	cancel()
 	if err != nil {
-		log.Printf("computer-info: getting snap assertions: %v", err)
+		slog.Warn("computer-info: cannot get snap assertions", "error", err)
 		return
 	}
 	if assertions == nil {
