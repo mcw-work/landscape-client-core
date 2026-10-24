@@ -36,6 +36,7 @@ func NewMemoryInfo() *MemoryInfo {
 // Name returns the Landscape message type string.
 func (p *MemoryInfo) Name() string { return "memory-info" }
 
+// Interval implements Plugin.
 func (p *MemoryInfo) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic memory information collection loop.

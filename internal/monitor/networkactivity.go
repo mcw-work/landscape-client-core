@@ -38,6 +38,7 @@ func NewNetworkActivity() *NetworkActivity {
 // Name returns the Landscape message type string.
 func (p *NetworkActivity) Name() string { return "network-activity" }
 
+// Interval implements Plugin.
 func (p *NetworkActivity) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic network activity collection loop. A baseline sample

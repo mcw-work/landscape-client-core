@@ -37,6 +37,7 @@ type usersState struct {
 	Groups map[string]groupRecord `json:"groups"`
 }
 
+// UserMonitor reports changes to the extrausers passwd and group databases.
 type UserMonitor struct {
 	heartbeatSource
 	passwdPath string
@@ -44,6 +45,7 @@ type UserMonitor struct {
 	interval   time.Duration
 }
 
+// NewUsers returns a UserMonitor reading the extrausers databases.
 func NewUsers() *UserMonitor {
 	return &UserMonitor{
 		passwdPath: "/var/lib/extrausers/passwd",
@@ -52,10 +54,13 @@ func NewUsers() *UserMonitor {
 	}
 }
 
+// Name implements Plugin.
 func (p *UserMonitor) Name() string { return "users" }
 
+// Interval implements Plugin.
 func (p *UserMonitor) Interval() time.Duration { return p.interval }
 
+// Run implements Plugin.
 func (p *UserMonitor) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved usersState
 	if state != nil {

@@ -58,8 +58,10 @@ func NewCancelHandler(opCtxMgr *OperationContextManager) *CancelHandler {
 	return &CancelHandler{opCtxMgr: opCtxMgr}
 }
 
+// MessageType implements Handler.
 func (h *CancelHandler) MessageType() string { return "cancel-operation" }
 
+// Handle implements Handler.
 func (h *CancelHandler) Handle(_ context.Context, msg exchange.Message, _ exchange.ResultSink) error {
 	opID, err := getInt64(msg, "operation-id")
 	if err != nil {

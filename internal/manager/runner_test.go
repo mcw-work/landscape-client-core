@@ -89,12 +89,12 @@ func (m *mockResultSink) first() (resultCall, bool) {
 
 // fakeHandler is a configurable Handler stub.
 type fakeHandler struct {
-	msgType string
-	called  chan exchange.Message
-	started chan struct{}
-	block   <-chan struct{}
-	err     error
-	panic_  bool
+	msgType     string
+	called      chan exchange.Message
+	started     chan struct{}
+	block       <-chan struct{}
+	err         error
+	shouldPanic bool
 }
 
 func newFakeHandler(msgType string) *fakeHandler {
@@ -113,7 +113,7 @@ func (f *fakeHandler) Handle(_ context.Context, msg exchange.Message, _ exchange
 	if f.block != nil {
 		<-f.block
 	}
-	if f.panic_ {
+	if f.shouldPanic {
 		panic("test panic")
 	}
 	f.called <- msg
@@ -194,7 +194,7 @@ func TestRunner_PanicSendsFailed(t *testing.T) {
 	sink := &mockResultSink{}
 
 	h := newFakeHandler("reboot")
-	h.panic_ = true
+	h.shouldPanic = true
 
 	runner := NewRunner([]Handler{h}, source, sink, 100)
 	runner.Register()
@@ -399,7 +399,7 @@ func TestRunner_WaitWithTimeoutHandlesPanickingHandler(t *testing.T) {
 	sink := &mockResultSink{}
 
 	h := newFakeHandler("shutdown")
-	h.panic_ = true
+	h.shouldPanic = true
 
 	runner := NewRunner([]Handler{h}, source, sink)
 	runner.Register()

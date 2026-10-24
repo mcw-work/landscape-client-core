@@ -37,6 +37,7 @@ func NewRebootRequired(client snapd.Client) *RebootRequiredPlugin {
 // Name returns the Landscape message type string.
 func (p *RebootRequiredPlugin) Name() string { return "reboot-required-info" }
 
+// Interval implements Plugin.
 func (p *RebootRequiredPlugin) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic reboot-required check loop. A message is emitted

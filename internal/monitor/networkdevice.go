@@ -24,6 +24,7 @@ type networkDeviceState struct {
 	Hash string `json:"hash"`
 }
 
+// NetworkDevice reports network interfaces, their addresses, flags and link speed.
 type NetworkDevice struct {
 	heartbeatSource
 	interval      time.Duration
@@ -32,6 +33,7 @@ type NetworkDevice struct {
 	sysNetPath    string
 }
 
+// NewNetworkDevice returns a NetworkDevice plugin using the host's interfaces.
 func NewNetworkDevice() *NetworkDevice {
 	return &NetworkDevice{
 		interval:      30 * time.Second,
@@ -41,10 +43,13 @@ func NewNetworkDevice() *NetworkDevice {
 	}
 }
 
+// Name implements Plugin.
 func (p *NetworkDevice) Name() string { return "network-device" }
 
+// Interval implements Plugin.
 func (p *NetworkDevice) Interval() time.Duration { return p.interval }
 
+// Run implements Plugin.
 func (p *NetworkDevice) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved networkDeviceState
 	if state != nil {

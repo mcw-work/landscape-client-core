@@ -36,6 +36,7 @@ func NewTemperature() *Temperature {
 // Name returns the Landscape message type string.
 func (p *Temperature) Name() string { return "temperature" }
 
+// Interval implements Plugin.
 func (p *Temperature) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic temperature collection loop.

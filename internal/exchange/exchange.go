@@ -28,8 +28,8 @@ const apiVersion = "3.3"
 const maxMessagesPerExchange = 100
 
 const (
-	backoffMin = 300 * time.Second
-	backoffMax = 7200 * time.Second
+	backoffInitial = 300 * time.Second
+	backoffMax     = 7200 * time.Second
 )
 
 // backoff sheds load from an overloaded server. Without it a fleet of devices
@@ -51,7 +51,7 @@ func (b *backoff) failure(status int) {
 		return
 	}
 	if b.delay == 0 {
-		b.delay = backoffMin
+		b.delay = backoffInitial
 	} else {
 		b.delay *= 2
 	}

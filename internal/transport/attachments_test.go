@@ -11,7 +11,7 @@ import (
 	"github.com/canonical/landscape-client-core/internal/transport"
 )
 
-func TestTransportAttachmentFetcher_Success(t *testing.T) {
+func TestAttachmentFetcher_Success(t *testing.T) {
 	var gotComputerID string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +47,7 @@ func TestTransportAttachmentFetcher_Success(t *testing.T) {
 	}
 }
 
-func TestTransportAttachmentFetcher_HTTPError(t *testing.T) {
+func TestAttachmentFetcher_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 	}))
@@ -67,7 +67,7 @@ func TestTransportAttachmentFetcher_HTTPError(t *testing.T) {
 	}
 }
 
-func TestTransportAttachmentFetcher_URLConstruction(t *testing.T) {
+func TestAttachmentFetcher_URLConstruction(t *testing.T) {
 	tests := []struct {
 		msgSuffix  string
 		id         int64

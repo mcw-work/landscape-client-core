@@ -108,12 +108,15 @@ type InstallSnapHandler struct {
 	opCtxMgr   *OperationContextManager
 }
 
+// SetOperationContextManager configures operation cancellation tracking.
 func (h *InstallSnapHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
 	h.opCtxMgr = opCtxMgr
 }
 
+// MessageType implements Handler.
 func (h *InstallSnapHandler) MessageType() string { return "install-snaps" }
 
+// Handle implements Handler.
 func (h *InstallSnapHandler) Handle(ctx context.Context, msg exchange.Message, result exchange.ResultSink) error {
 	opID, err := getInt64(msg, "operation-id")
 	if err != nil {
@@ -172,12 +175,15 @@ type RemoveSnapHandler struct {
 	opCtxMgr   *OperationContextManager
 }
 
+// SetOperationContextManager configures operation cancellation tracking.
 func (h *RemoveSnapHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
 	h.opCtxMgr = opCtxMgr
 }
 
+// MessageType implements Handler.
 func (h *RemoveSnapHandler) MessageType() string { return "remove-snaps" }
 
+// Handle implements Handler.
 func (h *RemoveSnapHandler) Handle(ctx context.Context, msg exchange.Message, result exchange.ResultSink) error {
 	opID, err := getInt64(msg, "operation-id")
 	if err != nil {
@@ -229,12 +235,15 @@ type RefreshSnapHandler struct {
 	opCtxMgr   *OperationContextManager
 }
 
+// SetOperationContextManager configures operation cancellation tracking.
 func (h *RefreshSnapHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
 	h.opCtxMgr = opCtxMgr
 }
 
+// MessageType implements Handler.
 func (h *RefreshSnapHandler) MessageType() string { return "refresh-snaps" }
 
+// Handle implements Handler.
 func (h *RefreshSnapHandler) Handle(ctx context.Context, msg exchange.Message, result exchange.ResultSink) error {
 	opID, err := getInt64(msg, "operation-id")
 	if err != nil {
@@ -285,12 +294,15 @@ type StartServiceHandler struct {
 	opCtxMgr *OperationContextManager
 }
 
+// SetOperationContextManager configures operation cancellation tracking.
 func (h *StartServiceHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
 	h.opCtxMgr = opCtxMgr
 }
 
+// MessageType implements Handler.
 func (h *StartServiceHandler) MessageType() string { return "start-snap-service" }
 
+// Handle implements Handler.
 func (h *StartServiceHandler) Handle(ctx context.Context, msg exchange.Message, result exchange.ResultSink) error {
 	snapName, err := getString(msg, "snap")
 	if err != nil {
@@ -322,12 +334,15 @@ type StopServiceHandler struct {
 	opCtxMgr *OperationContextManager
 }
 
+// SetOperationContextManager configures operation cancellation tracking.
 func (h *StopServiceHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
 	h.opCtxMgr = opCtxMgr
 }
 
+// MessageType implements Handler.
 func (h *StopServiceHandler) MessageType() string { return "stop-snap-service" }
 
+// Handle implements Handler.
 func (h *StopServiceHandler) Handle(ctx context.Context, msg exchange.Message, result exchange.ResultSink) error {
 	snapName, err := getString(msg, "snap")
 	if err != nil {
@@ -359,12 +374,15 @@ type RestartServiceHandler struct {
 	opCtxMgr *OperationContextManager
 }
 
+// SetOperationContextManager configures operation cancellation tracking.
 func (h *RestartServiceHandler) SetOperationContextManager(opCtxMgr *OperationContextManager) {
 	h.opCtxMgr = opCtxMgr
 }
 
+// MessageType implements Handler.
 func (h *RestartServiceHandler) MessageType() string { return "restart-snap-service" }
 
+// Handle implements Handler.
 func (h *RestartServiceHandler) Handle(ctx context.Context, msg exchange.Message, result exchange.ResultSink) error {
 	snapName, err := getString(msg, "snap")
 	if err != nil {

@@ -66,8 +66,10 @@ func NewShutdownHandler() *ShutdownHandler {
 	return &ShutdownHandler{Shutdown: dbusShutdown}
 }
 
+// MessageType implements Handler.
 func (h *ShutdownHandler) MessageType() string { return "shutdown" }
 
+// Handle implements Handler.
 func (h *ShutdownHandler) Handle(ctx context.Context, msg exchange.Message, result exchange.ResultSink) error {
 	opID, err := getInt64(msg, "operation-id")
 	if err != nil {
@@ -156,8 +158,10 @@ func (h *ScriptExecHandler) SetOperationContextManager(opCtxMgr *OperationContex
 	h.opCtxMgr = opCtxMgr
 }
 
+// MessageType implements Handler.
 func (h *ScriptExecHandler) MessageType() string { return "execute-script" }
 
+// Handle implements Handler.
 func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, result exchange.ResultSink) error {
 	opID, err := getInt64(msg, "operation-id")
 	if err != nil {

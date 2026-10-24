@@ -23,6 +23,7 @@ type processorInfoState struct {
 	Hash string `json:"hash"`
 }
 
+// ProcessorInfo reports the processors listed in /proc/cpuinfo.
 type ProcessorInfo struct {
 	heartbeatSource
 	cpuinfoPath string
@@ -30,6 +31,7 @@ type ProcessorInfo struct {
 	delay       time.Duration
 }
 
+// NewProcessorInfo returns a ProcessorInfo plugin reading /proc/cpuinfo.
 func NewProcessorInfo() *ProcessorInfo {
 	return &ProcessorInfo{
 		cpuinfoPath: "/proc/cpuinfo",
@@ -38,10 +40,13 @@ func NewProcessorInfo() *ProcessorInfo {
 	}
 }
 
+// Name implements Plugin.
 func (p *ProcessorInfo) Name() string { return "processor-info" }
 
+// Interval implements Plugin.
 func (p *ProcessorInfo) Interval() time.Duration { return p.interval }
 
+// Run implements Plugin.
 func (p *ProcessorInfo) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved processorInfoState
 	if state != nil {
