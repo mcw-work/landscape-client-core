@@ -41,6 +41,7 @@ func NewSnapServices(client snapd.Client) *SnapServicesPlugin {
 // Name returns the Landscape message type string.
 func (p *SnapServicesPlugin) Name() string { return "snap-services" }
 
+// Interval implements Plugin.
 func (p *SnapServicesPlugin) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic snap services collection loop. A message is emitted

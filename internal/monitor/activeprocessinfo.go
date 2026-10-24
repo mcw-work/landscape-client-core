@@ -57,6 +57,7 @@ func NewActiveProcessInfo() *ActiveProcessInfo {
 // Name returns the Landscape message type string.
 func (p *ActiveProcessInfo) Name() string { return "active-process-info" }
 
+// Interval implements Plugin.
 func (p *ActiveProcessInfo) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic process info collection loop.

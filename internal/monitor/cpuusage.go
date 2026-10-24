@@ -39,6 +39,7 @@ func NewCPUUsage() *CPUUsage {
 // Name returns the Landscape message type string.
 func (p *CPUUsage) Name() string { return "cpu-usage" }
 
+// Interval implements Plugin.
 func (p *CPUUsage) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic CPU usage collection loop. An initial baseline

@@ -41,8 +41,10 @@ func NewHardwareInfo() *HardwareInfo {
 // so without this the goroutine is blocked for the life of the process.
 const lshwTimeout = 2 * time.Minute
 
+// Name implements Plugin.
 func (p *HardwareInfo) Name() string { return "hardware-info" }
 
+// Interval implements Plugin.
 func (p *HardwareInfo) Interval() time.Duration { return p.interval }
 
 // Run sends hardware info immediately on startup, then once per day.

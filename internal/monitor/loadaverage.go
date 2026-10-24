@@ -35,6 +35,7 @@ func NewLoadAverage() *LoadAverage {
 // Name returns the Landscape message type string.
 func (p *LoadAverage) Name() string { return "load-average" }
 
+// Interval implements Plugin.
 func (p *LoadAverage) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic load average collection loop.

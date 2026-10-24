@@ -8,12 +8,32 @@ linters:
     - misspell
     - modernize
     - nakedret
+    - revive
     - staticcheck
     - testpackage
     - unused
     - depguard
 
   settings:
+    nakedret:
+      # Matches snapd's CODING.md.
+      max-func-lines: 5
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: error-strings
+        - name: error-naming
+        - name: error-return
+        - name: errorf
+        - name: context-as-argument
+        - name: receiver-naming
+        - name: time-naming
+        - name: var-naming
+        - name: indent-error-flow
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: redefines-builtin-id
     depguard:
       rules:
         main:

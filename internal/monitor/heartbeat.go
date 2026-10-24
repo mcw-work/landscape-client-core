@@ -18,6 +18,7 @@ type Heartbeat struct {
 	now  func() time.Time
 }
 
+// NewHeartbeat returns an empty Heartbeat; a nil now defaults to time.Now.
 func NewHeartbeat(now func() time.Time) *Heartbeat {
 	if now == nil {
 		now = time.Now

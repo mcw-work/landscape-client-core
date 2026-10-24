@@ -31,6 +31,7 @@ type mountInfoState struct {
 	FreeSpaceHash string `json:"free_space_hash"`
 }
 
+// MountInfo reports mounted filesystems and their capacity and free space.
 type MountInfo struct {
 	heartbeatSource
 	mountsPath string
@@ -38,6 +39,7 @@ type MountInfo struct {
 	interval   time.Duration
 }
 
+// NewMountInfo returns a MountInfo plugin reading /proc/mounts.
 func NewMountInfo() *MountInfo {
 	return &MountInfo{
 		mountsPath: "/proc/mounts",
@@ -52,10 +54,13 @@ func defaultStatfs(path string) (syscall.Statfs_t, error) {
 	return stat, err
 }
 
+// Name implements Plugin.
 func (p *MountInfo) Name() string { return "mount-info" }
 
+// Interval implements Plugin.
 func (p *MountInfo) Interval() time.Duration { return p.interval }
 
+// Run implements Plugin.
 func (p *MountInfo) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var saved mountInfoState
 	if state != nil {

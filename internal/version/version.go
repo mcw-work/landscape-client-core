@@ -1,3 +1,4 @@
+// Package version holds the client version reported to the Landscape server.
 package version
 
 // Version is the landscape-client version string expected by the server.

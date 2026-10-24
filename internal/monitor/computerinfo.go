@@ -29,6 +29,7 @@ type ciSavedState struct {
 	Brand         string `json:"brand"`
 }
 
+// ComputerInfo reports the hostname, OS release, memory totals and snap model assertions.
 type ComputerInfo struct {
 	heartbeatSource
 	meminfoPath   string
@@ -39,6 +40,7 @@ type ComputerInfo struct {
 	interval      time.Duration
 }
 
+// NewComputerInfo returns a ComputerInfo plugin that reads assertions through client.
 func NewComputerInfo(client snapd.Client) *ComputerInfo {
 	return &ComputerInfo{
 		meminfoPath:   "/proc/meminfo",
@@ -50,10 +52,13 @@ func NewComputerInfo(client snapd.Client) *ComputerInfo {
 	}
 }
 
+// Name implements Plugin.
 func (p *ComputerInfo) Name() string { return "computer-info" }
 
+// Interval implements Plugin.
 func (p *ComputerInfo) Interval() time.Duration { return p.interval }
 
+// Run implements Plugin.
 func (p *ComputerInfo) Run(ctx context.Context, sink exchange.MessageSink, state *persist.PluginStateAccessor) error {
 	var prev ciSavedState
 	if state != nil {
@@ -179,7 +184,7 @@ func (p *ComputerInfo) readMeminfo() (totalMemMB, totalSwapMB int64) {
 	f, err := os.Open(p.meminfoPath)
 	if err != nil {
 		slog.Warn("computer-info: cannot open meminfo", "path", p.meminfoPath, "error", err)
-		return
+		return 0, 0
 	}
 	defer func() {
 		_ = f.Close()
@@ -202,7 +207,7 @@ func (p *ComputerInfo) readMeminfo() (totalMemMB, totalSwapMB int64) {
 			totalSwapMB = val / 1024
 		}
 	}
-	return
+	return totalMemMB, totalSwapMB
 }
 
 func (p *ComputerInfo) readMachineID() string {
@@ -249,17 +254,17 @@ func (p *ComputerInfo) readOSRelease() (distributorID, description, release, cod
 
 func (p *ComputerInfo) readSnapAssertions(ctx context.Context) (serial, model, brand string) {
 	if p.snapdClient == nil {
-		return
+		return "", "", ""
 	}
 	callCtx, cancel := context.WithTimeout(ctx, snapdCallTimeout)
 	assertions, err := p.snapdClient.GetAssertions(callCtx)
 	cancel()
 	if err != nil {
 		slog.Warn("computer-info: cannot get snap assertions", "error", err)
-		return
+		return "", "", ""
 	}
 	if assertions == nil {
-		return
+		return "", "", ""
 	}
 	return assertions.Serial, assertions.Model, assertions.Brand
 }

@@ -23,6 +23,7 @@ type MockClient struct {
 	Err            error    // if non-nil, all methods return this error
 }
 
+// ListSnaps implements Client.
 func (m *MockClient) ListSnaps(_ context.Context) ([]SnapInfo, error) {
 	if m.Err != nil {
 		return nil, m.Err
@@ -30,6 +31,7 @@ func (m *MockClient) ListSnaps(_ context.Context) ([]SnapInfo, error) {
 	return m.Snaps, nil
 }
 
+// ListServices implements Client.
 func (m *MockClient) ListServices(_ context.Context) ([]ServiceInfo, error) {
 	if m.Err != nil {
 		return nil, m.Err
@@ -37,6 +39,7 @@ func (m *MockClient) ListServices(_ context.Context) ([]ServiceInfo, error) {
 	return m.Services, nil
 }
 
+// InstallSnap implements Client.
 func (m *MockClient) InstallSnap(_ context.Context, name string, _ InstallOptions) (string, error) {
 	if m.Err != nil {
 		return "", m.Err
@@ -47,6 +50,7 @@ func (m *MockClient) InstallSnap(_ context.Context, name string, _ InstallOption
 	return m.ChangeID, nil
 }
 
+// RemoveSnap implements Client.
 func (m *MockClient) RemoveSnap(_ context.Context, name string) (string, error) {
 	if m.Err != nil {
 		return "", m.Err
@@ -57,6 +61,7 @@ func (m *MockClient) RemoveSnap(_ context.Context, name string) (string, error) 
 	return m.ChangeID, nil
 }
 
+// RefreshSnap implements Client.
 func (m *MockClient) RefreshSnap(_ context.Context, name string) (string, error) {
 	if m.Err != nil {
 		return "", m.Err
@@ -67,6 +72,7 @@ func (m *MockClient) RefreshSnap(_ context.Context, name string) (string, error)
 	return m.ChangeID, nil
 }
 
+// StartService implements Client.
 func (m *MockClient) StartService(_ context.Context, snapName, serviceName string) error {
 	if m.Err != nil {
 		return m.Err
@@ -77,6 +83,7 @@ func (m *MockClient) StartService(_ context.Context, snapName, serviceName strin
 	return nil
 }
 
+// StopService implements Client.
 func (m *MockClient) StopService(_ context.Context, snapName, serviceName string) error {
 	if m.Err != nil {
 		return m.Err
@@ -87,6 +94,7 @@ func (m *MockClient) StopService(_ context.Context, snapName, serviceName string
 	return nil
 }
 
+// RestartService implements Client.
 func (m *MockClient) RestartService(_ context.Context, snapName, serviceName string) error {
 	if m.Err != nil {
 		return m.Err
@@ -97,10 +105,12 @@ func (m *MockClient) RestartService(_ context.Context, snapName, serviceName str
 	return nil
 }
 
+// WaitForChange implements Client.
 func (m *MockClient) WaitForChange(_ context.Context, _ string) error {
 	return m.ChangeErr
 }
 
+// GetAssertions implements Client.
 func (m *MockClient) GetAssertions(_ context.Context) (*Assertions, error) {
 	if m.Err != nil {
 		return nil, m.Err
@@ -108,6 +118,7 @@ func (m *MockClient) GetAssertions(_ context.Context) (*Assertions, error) {
 	return m.AssertionsData, nil
 }
 
+// GetRebootRequired implements Client.
 func (m *MockClient) GetRebootRequired(_ context.Context) (bool, error) {
 	if m.Err != nil {
 		return false, m.Err

@@ -30,6 +30,7 @@ func NewSnapPackages(client snapd.Client) *SnapPackagesPlugin {
 // Name returns the Landscape message type string.
 func (p *SnapPackagesPlugin) Name() string { return "snaps" }
 
+// Interval implements Plugin.
 func (p *SnapPackagesPlugin) Interval() time.Duration { return p.interval }
 
 // Run starts the periodic snap list collection loop. A full installed list is
