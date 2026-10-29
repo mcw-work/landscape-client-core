@@ -71,6 +71,7 @@ func TestRun_ServerCommandsReachWiredHandlers(t *testing.T) {
 	}
 	cfg := config.Defaults()
 	cfg.URL = srv.URL + "/message-system"
+	cfg.ExchangeInterval = 100 * time.Millisecond
 	// SetInterval applies from the next timer arm, so start fast and let the
 	// server slow the pinger down.
 	cfg.PingInterval = 300 * time.Millisecond
