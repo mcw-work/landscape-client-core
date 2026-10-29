@@ -291,6 +291,7 @@ func TestWaitForChange_Done(t *testing.T) {
 	})
 	_, socketPath := startUnixServer(t, handler)
 	client := snapd.New(socketPath)
+	snapd.ShortenRetryDelay(client)
 
 	err := client.WaitForChange(context.Background(), "change-99")
 	if err != nil {
@@ -508,6 +509,10 @@ func TestClient_StalledSocketDoesNotHang(t *testing.T) {
 	}()
 
 	c := snapd.New(sockPath)
+	if header, overall := snapd.ClientTimeouts(c); header != 30*time.Second || overall != 60*time.Second {
+		t.Fatalf("timeouts: got header=%v overall=%v, want 30s/60s", header, overall)
+	}
+	snapd.SetResponseHeaderTimeout(c, 100*time.Millisecond)
 	start := time.Now()
 	_, err = c.ListSnaps(context.Background())
 	elapsed := time.Since(start)
@@ -515,7 +520,10 @@ func TestClient_StalledSocketDoesNotHang(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error from a stalled socket, got nil")
 	}
-	if elapsed > 60*time.Second {
+	if !strings.Contains(err.Error(), "timeout awaiting response headers") {
+		t.Errorf("error %q is not a response-header timeout", err)
+	}
+	if elapsed > 5*time.Second {
 		t.Errorf("ListSnaps blocked for %v; the client has no timeout", elapsed)
 	}
 
