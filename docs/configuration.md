@@ -92,6 +92,13 @@ The snap `configure` hook runs `landscape-client-core --validate-config` on ever
 
 This means you can set keys incrementally without errors until you have all required keys present.
 
+### Daemon Lifecycle
+
+The daemon is installed disabled, so an unconfigured device does not crash-loop. After validation the hook manages the service:
+
+- **`url`, `account-name` and `computer-title` all set**: starts and enables the daemon, or restarts it if it is already running so the change takes effect.
+- **Any of them missing**: stops and disables the daemon.
+
 ## Configuration File Location
 
 Configuration is managed entirely through snapctl and the snap configuration system. The raw values are stored by snapd, not in a user-visible file. Derived runtime state (device IDs, sequence numbers) is stored separately in:

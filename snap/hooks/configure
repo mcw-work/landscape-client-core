@@ -13,7 +13,21 @@ BIN=/snap/landscape-client-core/current/bin/landscape-client-core
 #    rejected (e.g. custodian plug not yet connected on a fresh install) —
 #    that would block `snap set`. Log and continue instead.
 if ! err="$("$BIN" --sync-confdb 2>&1)"; then
-    logger -t landscape-client-core.configure "confdb publish skipped: $err"
+    # Not logger: strict confinement denies /dev/log, which would fail the hook.
+    echo "landscape-client-core: confdb publish skipped: $err" >&2
+fi
+
+# 4. Run the daemon only when configured: without the required keys it exits
+#    non-zero and restart-condition: on-failure would crash-loop it.
+SVC="$SNAP_INSTANCE_NAME.landscape-client-core"
+if [ -n "$(snapctl get url)" ] && [ -n "$(snapctl get account-name)" ] && [ -n "$(snapctl get computer-title)" ]; then
+    if snapctl services "$SVC" | grep -qw active; then
+        snapctl restart "$SVC"
+    else
+        snapctl start --enable "$SVC"
+    fi
+else
+    snapctl stop --disable "$SVC"
 fi
 
 exit 0

@@ -20,6 +20,8 @@ apps:
   landscape-client-core:
     command: bin/landscape-client-core
     daemon: simple
+    # The configure hook enables it once the required config is present.
+    install-mode: disable
     restart-condition: on-failure
     environment:
       GOMEMLIMIT: "64MiB"
