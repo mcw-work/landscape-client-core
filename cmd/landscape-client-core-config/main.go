@@ -447,17 +447,22 @@ func (w *wizard) Run() error {
 }
 
 func main() {
+	os.Exit(runWizard(os.Stdin, os.Stdout, os.Stderr, &RealSnapctlRunner{}))
+}
+
+func runWizard(in io.Reader, out, errOut io.Writer, snapctl SnapctlRunner) int {
 	w := &wizard{
 		io: wizardIO{
-			inRaw: os.Stdin,
-			in:    bufio.NewReader(os.Stdin),
-			out:   os.Stdout,
-			err:   os.Stderr,
+			inRaw: in,
+			in:    bufio.NewReader(in),
+			out:   out,
+			err:   errOut,
 		},
-		snapctl: &RealSnapctlRunner{},
+		snapctl: snapctl,
 	}
 	if err := w.Run(); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(errOut, "error: %v\n", err)
+		return 1
 	}
+	return 0
 }
