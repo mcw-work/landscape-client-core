@@ -28,7 +28,14 @@ type fakeServer struct {
 	server    *httptest.Server
 	mu        sync.Mutex
 	received  []map[string]any
+	headers   []http.Header
 	responses []map[string]any
+	// While down, exchange requests get 503 and are not recorded in received.
+	down   bool
+	failed int
+
+	pingHasMessages bool
+	pingIDs         []string
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
@@ -40,12 +47,24 @@ func newFakeServer(t *testing.T) *fakeServer {
 }
 
 func (fs *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/ping" {
+		fs.handlePing(w, r)
+		return
+	}
+
 	body, _ := io.ReadAll(r.Body)
 	raw, _ := bpickle.Unmarshal(body)
 	payload, _ := raw.(map[string]any)
 
 	fs.mu.Lock()
+	if fs.down {
+		fs.failed++
+		fs.mu.Unlock()
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	fs.received = append(fs.received, payload)
+	fs.headers = append(fs.headers, r.Header.Clone())
 	var resp map[string]any
 	if len(fs.responses) > 0 {
 		resp = fs.responses[0]
@@ -66,12 +85,47 @@ func emptyResponse() map[string]any {
 	}
 }
 
+func (fs *fakeServer) handlePing(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	fs.mu.Lock()
+	fs.pingIDs = append(fs.pingIDs, r.PostForm.Get("insecure_id"))
+	hasMessages := fs.pingHasMessages
+	fs.mu.Unlock()
+
+	data, _ := bpickle.Marshal(map[string]any{"messages": hasMessages})
+	_, _ = w.Write(data)
+}
+
 func (fs *fakeServer) URL() string { return fs.server.URL }
 
 func (fs *fakeServer) queueResponse(resp map[string]any) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	fs.responses = append(fs.responses, resp)
+}
+
+func (fs *fakeServer) setDown(down bool) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	fs.down = down
+}
+
+func (fs *fakeServer) failedCount() int {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.failed
+}
+
+func (fs *fakeServer) header(i int) http.Header {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.headers[i]
+}
+
+func (fs *fakeServer) pings() []string {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return append([]string(nil), fs.pingIDs...)
 }
 
 func (fs *fakeServer) count() int {
@@ -185,7 +239,13 @@ func newTestExchange(t *testing.T, serverURL string, initialState *persist.State
 			t.Fatalf("store.Save: %v", err)
 		}
 	}
+	return newExchange(t, serverURL, store, nil), store
+}
 
+// newExchange builds an Exchange on an existing store so tests can simulate a
+// daemon restart. tweak, if non-nil, adjusts the config before construction.
+func newExchange(t *testing.T, serverURL string, store *persist.Store, tweak func(*config.Config)) *exchange.Exchange {
+	t.Helper()
 	cfg := config.Defaults()
 	cfg.URL = serverURL + "/message-system"
 	cfg.AccountName = "test-account"
@@ -193,18 +253,22 @@ func newTestExchange(t *testing.T, serverURL string, initialState *persist.State
 	cfg.ComputerTitle = "test-computer"
 	cfg.ExchangeInterval = 100 * time.Millisecond
 	cfg.UrgentExchangeInterval = 50 * time.Millisecond
+	if tweak != nil {
+		tweak(cfg)
+	}
 
 	tc, err := transport.New(transport.Config{})
 	if err != nil {
 		t.Fatalf("transport.New: %v", err)
 	}
 
-	return exchange.New(cfg, store, tc), store
+	return exchange.New(cfg, store, tc)
 }
 
-// startExchange starts ex.Run in a goroutine and registers a t.Cleanup that
-// cancels the context and waits for Run to return.
-func startExchange(t *testing.T, ex *exchange.Exchange) context.CancelFunc {
+// startExchange starts ex.Run in a goroutine. The returned stop function
+// cancels Run and waits for it (including the final drain) to return; it is
+// also registered with t.Cleanup and is safe to call more than once.
+func startExchange(t *testing.T, ex *exchange.Exchange) func() {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	done := make(chan struct{})
@@ -212,11 +276,12 @@ func startExchange(t *testing.T, ex *exchange.Exchange) context.CancelFunc {
 		defer close(done)
 		_ = ex.Run(ctx)
 	}()
-	t.Cleanup(func() {
+	stop := sync.OnceFunc(func() {
 		cancel()
 		<-done
 	})
-	return cancel
+	t.Cleanup(stop)
+	return stop
 }
 
 // -----------------------------------------------------------------------

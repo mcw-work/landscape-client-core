@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync/atomic"
 	"syscall"
@@ -1181,62 +1182,48 @@ carol:x:1002:1002:Carol:/home/carol:/bin/bash
 	atomicWriteFixture(t, groupPath, `staff:x:50:alice,carol
 `)
 
-	// Second tick: update alice, delete bob, create carol.
-	waitForMessages(t, sink, 2, 500*time.Millisecond)
+	// The two fixture writes are not atomic together, so a tick can land between
+	// them and split the diff across messages; merge every diff after the first.
+	var foundBob, foundAlice, foundCarol bool
+	deadline := time.Now().Add(time.Second)
+	for (!foundBob || !foundAlice || !foundCarol) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+		msgs := sink.Messages()
+		for _, msg := range msgs[1:] {
+			if msg["type"] != "users" {
+				t.Fatalf("type: want users, got %v", msg["type"])
+			}
+			if del, ok := msg["delete-users"].([]string); ok && slices.Contains(del, "bob") {
+				foundBob = true
+			}
+			if upd, ok := msg["update-users"].([]map[string]any); ok {
+				for _, u := range upd {
+					if u["username"] == "alice" && u["name"] == "Alice Updated" {
+						foundAlice = true
+					}
+				}
+			}
+			if cre, ok := msg["create-users"].([]map[string]any); ok {
+				for _, u := range cre {
+					if u["username"] == "carol" {
+						foundCarol = true
+					}
+				}
+			}
+		}
+	}
 	cancel()
 	if err := <-errCh; err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-
-	// Second message is the diff.
-	secondMsg := sink.Messages()[1]
-	if secondMsg["type"] != "users" {
-		t.Errorf("type: want users, got %v", secondMsg["type"])
-	}
-
-	// delete-users should contain bob.
-	delUsers, ok := secondMsg["delete-users"].([]string)
-	if !ok {
-		t.Fatalf("delete-users: expected []string, got %T", secondMsg["delete-users"])
-	}
-	foundBob := false
-	for _, u := range delUsers {
-		if u == "bob" {
-			foundBob = true
-		}
-	}
 	if !foundBob {
-		t.Errorf("expected bob in delete-users, got %v", delUsers)
-	}
-
-	// update-users should contain alice with updated name.
-	updateUsers, ok := secondMsg["update-users"].([]map[string]any)
-	if !ok {
-		t.Fatalf("update-users: expected []map[string]any, got %T", secondMsg["update-users"])
-	}
-	foundAlice := false
-	for _, u := range updateUsers {
-		if u["username"] == "alice" && u["name"] == "Alice Updated" {
-			foundAlice = true
-		}
+		t.Error("expected bob in delete-users")
 	}
 	if !foundAlice {
-		t.Errorf("expected updated alice in update-users, got %v", updateUsers)
-	}
-
-	// create-users should contain carol.
-	createUsers, ok := secondMsg["create-users"].([]map[string]any)
-	if !ok {
-		t.Fatalf("create-users: expected []map[string]any, got %T", secondMsg["create-users"])
-	}
-	foundCarol := false
-	for _, u := range createUsers {
-		if u["username"] == "carol" {
-			foundCarol = true
-		}
+		t.Error("expected updated alice in update-users")
 	}
 	if !foundCarol {
-		t.Errorf("expected carol in create-users, got %v", createUsers)
+		t.Error("expected carol in create-users")
 	}
 }
 

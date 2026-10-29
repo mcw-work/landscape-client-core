@@ -3,8 +3,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -27,11 +29,25 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+var watchdogInterval = 30 * time.Second
+
 func main() {
-	validateOnly := flag.Bool("validate-config", false, "Validate configuration and exit")
-	syncConfDB := flag.Bool("sync-confdb", false, "Publish validated snap config to the confdb admin view and exit")
-	handlerConcurrency := flag.Int("handler-concurrency", 100, "Maximum number of concurrent handler executions")
-	flag.Parse()
+	code := realMain(context.Background(), os.Args[1:], os.Stderr, "/run/snapd.socket")
+	os.Exit(code)
+}
+
+func realMain(ctx context.Context, args []string, stderr io.Writer, snapdSocket string) int {
+	flags := flag.NewFlagSet("landscape-client-core", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	validateOnly := flags.Bool("validate-config", false, "Validate configuration and exit")
+	syncConfDB := flags.Bool("sync-confdb", false, "Publish validated snap config to the confdb admin view and exit")
+	handlerConcurrency := flags.Int("handler-concurrency", 100, "Maximum number of concurrent handler executions")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
 
 	// Handle --validate-config before daemon startup.
 	// ValidateForHook tolerates fresh installs (no config) and incremental
@@ -39,18 +55,18 @@ func main() {
 	// but something is invalid.
 	if *validateOnly {
 		if err := config.ValidateForHook(&snapctlLoader{}); err != nil {
-			fmt.Fprintf(os.Stderr, "landscape-client-core: config error: %v\n", err)
-			os.Exit(1)
+			_, _ = fmt.Fprintf(stderr, "landscape-client-core: config error: %v\n", err)
+			return 1
 		}
-		os.Exit(0)
+		return 0
 	}
 
 	if *syncConfDB {
 		if err := publishConfDB(&snapctlLoader{}); err != nil {
-			fmt.Fprintf(os.Stderr, "landscape-client-core: confdb sync error: %v\n", err)
-			os.Exit(1)
+			_, _ = fmt.Fprintf(stderr, "landscape-client-core: confdb sync error: %v\n", err)
+			return 1
 		}
-		os.Exit(0)
+		return 0
 	}
 
 	snapCommon := os.Getenv("SNAP_COMMON")
@@ -61,9 +77,12 @@ func main() {
 	// Load config via snapctl.
 	cfg, err := config.Load(&snapctlLoader{})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "landscape-client-core: config error: %v\n", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(stderr, "landscape-client-core: config error: %v\n", err)
+		return 1
 	}
+
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
 
 	// Configure slog logger.
 	level := slog.LevelInfo
@@ -75,7 +94,7 @@ func main() {
 	case "error":
 		level = slog.LevelError
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level})))
 
 	// Open persist store.
 	statePath := filepath.Join(snapCommon, "state.json")
@@ -92,26 +111,21 @@ func main() {
 	})
 	if err != nil {
 		slog.Error("failed to create transport client", "error", err)
-		os.Exit(1)
+		return 1
 	}
-
-	// Create snapd client.
-	snapdClient := snapd.New("/run/snapd.socket")
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer cancel()
 
 	if err := run(ctx, deps{
 		cfg:                cfg,
 		store:              store,
 		transport:          tc,
-		snapd:              snapdClient,
+		snapd:              snapd.New(snapdSocket),
 		snapCommon:         snapCommon,
 		handlerConcurrency: *handlerConcurrency,
 	}); err != nil {
 		slog.Error("daemon exited with error", "error", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // deps holds the constructed collaborators run() needs, so the daemon wiring
@@ -242,7 +256,7 @@ func run(ctx context.Context, d deps) error {
 	// reporting nothing. Exiting non-zero lets snapd's restart-condition recover
 	// a wedged daemon.
 	eg.Go(func() error {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(watchdogInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -285,16 +299,17 @@ func run(ctx context.Context, d deps) error {
 	// period for a value that will never arrive.
 	if groupErr == nil {
 		select {
-		case err := <-groupDone:
-			if err != nil {
-				slog.Error("runner group exited with error", "error", err)
+		case groupErr = <-groupDone:
+			if groupErr != nil {
+				slog.Error("runner group exited with error", "error", groupErr)
 			}
 		case <-time.After(5 * time.Second):
 			slog.Warn("shutdown timeout, exiting")
 		}
 	}
 
-	return nil
+	// restart-condition is on-failure, so a runner failure must reach the exit code.
+	return groupErr
 }
 
 // snapctlLoader implements config.Loader using snapctl.
