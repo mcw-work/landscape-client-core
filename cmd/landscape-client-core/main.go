@@ -32,9 +32,7 @@ import (
 var watchdogInterval = 30 * time.Second
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	code := realMain(ctx, os.Args[1:], os.Stderr, "/run/snapd.socket")
-	cancel()
+	code := realMain(context.Background(), os.Args[1:], os.Stderr, "/run/snapd.socket")
 	os.Exit(code)
 }
 
@@ -82,6 +80,9 @@ func realMain(ctx context.Context, args []string, stderr io.Writer, snapdSocket 
 		_, _ = fmt.Fprintf(stderr, "landscape-client-core: config error: %v\n", err)
 		return 1
 	}
+
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
 
 	// Configure slog logger.
 	level := slog.LevelInfo
