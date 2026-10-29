@@ -298,9 +298,9 @@ func run(ctx context.Context, d deps) error {
 	// period for a value that will never arrive.
 	if groupErr == nil {
 		select {
-		case err := <-groupDone:
-			if err != nil {
-				slog.Error("runner group exited with error", "error", err)
+		case groupErr = <-groupDone:
+			if groupErr != nil {
+				slog.Error("runner group exited with error", "error", groupErr)
 			}
 		case <-time.After(5 * time.Second):
 			slog.Warn("shutdown timeout, exiting")
