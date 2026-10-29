@@ -1186,7 +1186,7 @@ carol:x:1002:1002:Carol:/home/carol:/bin/bash
 	// them and split the diff across messages; merge every diff after the first.
 	var foundBob, foundAlice, foundCarol bool
 	deadline := time.Now().Add(time.Second)
-	for !(foundBob && foundAlice && foundCarol) && time.Now().Before(deadline) {
+	for (!foundBob || !foundAlice || !foundCarol) && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 		msgs := sink.Messages()
 		for _, msg := range msgs[1:] {

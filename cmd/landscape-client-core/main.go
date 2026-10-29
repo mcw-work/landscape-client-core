@@ -57,7 +57,7 @@ func realMain(ctx context.Context, args []string, stderr io.Writer, snapdSocket 
 	// but something is invalid.
 	if *validateOnly {
 		if err := config.ValidateForHook(&snapctlLoader{}); err != nil {
-			fmt.Fprintf(stderr, "landscape-client-core: config error: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "landscape-client-core: config error: %v\n", err)
 			return 1
 		}
 		return 0
@@ -65,7 +65,7 @@ func realMain(ctx context.Context, args []string, stderr io.Writer, snapdSocket 
 
 	if *syncConfDB {
 		if err := publishConfDB(&snapctlLoader{}); err != nil {
-			fmt.Fprintf(stderr, "landscape-client-core: confdb sync error: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "landscape-client-core: confdb sync error: %v\n", err)
 			return 1
 		}
 		return 0
@@ -79,7 +79,7 @@ func realMain(ctx context.Context, args []string, stderr io.Writer, snapdSocket 
 	// Load config via snapctl.
 	cfg, err := config.Load(&snapctlLoader{})
 	if err != nil {
-		fmt.Fprintf(stderr, "landscape-client-core: config error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "landscape-client-core: config error: %v\n", err)
 		return 1
 	}
 

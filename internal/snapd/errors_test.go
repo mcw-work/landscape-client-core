@@ -574,12 +574,10 @@ func TestMockClientBehaviour(t *testing.T) {
 		m := &snapd.MockClient{}
 		var wg sync.WaitGroup
 		for i := range 20 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				_, _ = m.InstallSnap(ctx, fmt.Sprint(i), snapd.InstallOptions{})
 				_ = m.StartService(ctx, "s", fmt.Sprint(i))
-			}()
+			})
 		}
 		wg.Wait()
 		if len(m.InstallCalls) != 20 || len(m.ServiceActions) != 20 {

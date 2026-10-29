@@ -3,6 +3,7 @@ package manager_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -288,9 +289,7 @@ func TestServiceHandlers_MissingFields(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(hc.name+"/"+tc.name, func(t *testing.T) {
 				msg := exchange.Message{}
-				for k, v := range full {
-					msg[k] = v
-				}
+				maps.Copy(msg, full)
 				tc.mutate(msg)
 				mc := &snapd.MockClient{}
 				sink := &mockResultSink{}
