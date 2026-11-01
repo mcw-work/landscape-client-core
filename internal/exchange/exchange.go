@@ -538,6 +538,8 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 	if v, ok := response["next-expected-sequence"]; ok {
 		serverACK = toInt64(v)
 	}
+	progressed := serverACK != state.OutboundSequence
+	prevAcceptedTypes := slices.Clone(state.AcceptedTypes)
 
 	// If the server's ACK is below what we just sent, re-enqueue un-ACK'd messages
 	// so they are retransmitted at the correct sequence on the next exchange.
@@ -693,14 +695,15 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		return fmt.Errorf("exchange: cannot save state: %w", err)
 	}
 
-	// If sendable messages are still queued (capped backlog, a re-queue, or held
-	// messages a new accepted-types just released), drain them promptly rather
-	// than one batch per interval.
+	// Drain a remaining backlog promptly, but only if the server made progress or
+	// a new accepted-types released held messages. Like Python, a server that
+	// accepted nothing is retried on the normal schedule, not in a tight loop.
 	accepted = acceptedSet(state.AcceptedTypes)
+	released := !slices.Equal(prevAcceptedTypes, state.AcceptedTypes)
 	e.mu.Lock()
 	backlog := len(e.pending) > countHeld(accepted, e.pending)
 	e.mu.Unlock()
-	if backlog {
+	if backlog && (progressed || released) {
 		e.TriggerExchange()
 	}
 

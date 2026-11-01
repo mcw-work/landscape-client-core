@@ -380,6 +380,48 @@ func TestPerformExchange_ReleasesHeldMessagesWhenTypeIsAccepted(t *testing.T) {
 	}
 }
 
+func TestPerformExchange_PartialACKRetriesOnlyOnProgress(t *testing.T) {
+	testCases := []struct {
+		name      string
+		serverACK int64
+		wantWake  bool
+	}{
+		{name: "no progress waits for the schedule", serverACK: 0, wantWake: false},
+		{name: "some progress drains promptly", serverACK: 1, wantWake: true},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := newTestSetup(t)
+			state := ts.freshState(t)
+			state.SecureID = "sec123"
+
+			for range 3 {
+				_ = ts.ex.Send(context.Background(), Message{"type": "cpu-usage"})
+			}
+			ts.fs.push(map[string]any{"messages": []any{}, "next-expected-sequence": tc.serverACK})
+			if err := ts.ex.performExchange(context.Background(), state); err != nil {
+				t.Fatalf("performExchange: %v", err)
+			}
+
+			ts.ex.mu.Lock()
+			pending := len(ts.ex.pending)
+			ts.ex.mu.Unlock()
+			if want := 3 - int(tc.serverACK); pending != want {
+				t.Errorf("pending = %d, want %d re-queued", pending, want)
+			}
+			woke := false
+			select {
+			case <-ts.ex.wake:
+				woke = true
+			default:
+			}
+			if woke != tc.wantWake {
+				t.Errorf("immediate retry = %v, want %v", woke, tc.wantWake)
+			}
+		})
+	}
+}
+
 func TestPerformExchange_UnmarshalablePayloadIsNotPosted(t *testing.T) {
 	ts := newTestSetup(t)
 	state := ts.freshState(t)
