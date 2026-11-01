@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -316,8 +317,7 @@ func TestPersistQueue_FullQueueDropsTelemetryAndWarns(t *testing.T) {
 	}
 }
 
-func TestPerformExchange_DropsTypesServerDoesNotAccept(t *testing.T) {
-	logs := captureExchangeLogs(t)
+func TestPerformExchange_HoldsTypesServerDoesNotAccept(t *testing.T) {
 	ts := newTestSetup(t)
 	state := ts.freshState(t)
 	state.SecureID = "sec123"
@@ -333,8 +333,50 @@ func TestPerformExchange_DropsTypesServerDoesNotAccept(t *testing.T) {
 	if got := strings.Join(messageTypes(t, ts.fs.get(0).payload), ","); got != "cpu-usage,operation-result" {
 		t.Errorf("sent types = %q, want cpu-usage,operation-result", got)
 	}
-	if !logs.hasLine("not in server accepted list", "dropped=1") {
-		t.Errorf("drop not logged: %q", logs.String())
+	ts.ex.mu.Lock()
+	pending := slices.Clone(ts.ex.pending)
+	ts.ex.mu.Unlock()
+	if len(pending) != 1 || pending[0]["type"] != "disk-usage" {
+		t.Errorf("pending = %v, want the held disk-usage message", pending)
+	}
+	select {
+	case <-ts.ex.wake:
+		t.Error("held messages alone must not trigger another exchange")
+	default:
+	}
+}
+
+// Reproduces the post-registration sequence seen on devices: the server first
+// accepts only registration types, then sends the full list.
+func TestPerformExchange_ReleasesHeldMessagesWhenTypeIsAccepted(t *testing.T) {
+	ts := newTestSetup(t)
+	state := ts.freshState(t)
+	state.SecureID = "sec123"
+	state.AcceptedTypes = []string{"register"}
+
+	_ = ts.ex.Send(context.Background(), Message{"type": "computer-info"})
+	ts.fs.push(map[string]any{
+		"messages": []any{
+			map[string]any{"type": "accepted-types", "types": []any{"register", "computer-info"}},
+		},
+	})
+	if err := ts.ex.performExchange(context.Background(), state); err != nil {
+		t.Fatalf("first performExchange: %v", err)
+	}
+	if got := messageTypes(t, ts.fs.get(0).payload); len(got) != 0 {
+		t.Errorf("first exchange sent %v before the type was accepted", got)
+	}
+	select {
+	case <-ts.ex.wake:
+	default:
+		t.Fatal("released messages must trigger a prompt exchange")
+	}
+
+	if err := ts.ex.performExchange(context.Background(), state); err != nil {
+		t.Fatalf("second performExchange: %v", err)
+	}
+	if got := strings.Join(messageTypes(t, ts.fs.get(1).payload), ","); got != "computer-info" {
+		t.Errorf("second exchange sent %q, want computer-info", got)
 	}
 }
 

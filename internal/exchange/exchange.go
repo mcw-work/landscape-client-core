@@ -415,39 +415,23 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 
 	// Drain at most maxMessagesPerExchange, matching Python's max_messages. A
 	// restored spool after a long outage would otherwise produce one enormous
-	// request.
+	// request. Messages of types the server has not accepted stay queued, as
+	// Python's held messages do, and go out once accepted-types includes them.
+	accepted := acceptedSet(state.AcceptedTypes)
 	e.mu.Lock()
-	n := min(len(e.pending), maxMessagesPerExchange)
-	snapshot := make([]Message, n)
-	copy(snapshot, e.pending[:n])
-	e.pending = e.pending[n:]
+	var snapshot, kept []Message
+	for _, m := range e.pending {
+		if len(snapshot) < maxMessagesPerExchange && isAccepted(accepted, m) {
+			snapshot = append(snapshot, m)
+		} else {
+			kept = append(kept, m)
+		}
+	}
+	e.pending = kept
+	held := countHeld(accepted, kept)
 	e.mu.Unlock()
-
-	// Filter out message types the server has not declared it handles.
-	// The server's accepted types are stored in state.AcceptedTypes after the
-	// first accepted-types exchange. Until then (empty list), allow all types
-	// through so that the initial register/registration messages can be sent.
-	if len(state.AcceptedTypes) > 0 {
-		accepted := make(map[string]bool, len(state.AcceptedTypes))
-		for _, t := range state.AcceptedTypes {
-			accepted[t] = true
-		}
-		// Always allow protocol-level messages regardless of accepted types.
-		for _, t := range []string{"register", "resynchronize", "operation-result"} {
-			accepted[t] = true
-		}
-		filtered := snapshot[:0]
-		for _, m := range snapshot {
-			t, _ := m["type"].(string)
-			if accepted[t] {
-				filtered = append(filtered, m)
-			}
-		}
-		if len(filtered) != len(snapshot) {
-			dropped := len(snapshot) - len(filtered)
-			slog.Warn("exchange: dropped messages with types not in server accepted list", "dropped", dropped)
-		}
-		snapshot = filtered
+	if held > 0 {
+		slog.Debug("exchange: holding messages until the server accepts their types", "held", held)
 	}
 
 	// Build the messages slice as []any for bpickle.
@@ -709,16 +693,53 @@ func (e *Exchange) performExchange(ctx context.Context, state *persist.State) er
 		return fmt.Errorf("exchange: cannot save state: %w", err)
 	}
 
-	// If messages are still queued (capped backlog or a re-queue), wake the loop
-	// so the backlog drains promptly rather than one batch per interval.
+	// If sendable messages are still queued (capped backlog, a re-queue, or held
+	// messages a new accepted-types just released), drain them promptly rather
+	// than one batch per interval.
+	accepted = acceptedSet(state.AcceptedTypes)
 	e.mu.Lock()
-	backlog := len(e.pending) > 0
+	backlog := len(e.pending) > countHeld(accepted, e.pending)
 	e.mu.Unlock()
 	if backlog {
 		e.TriggerExchange()
 	}
 
 	return nil
+}
+
+// acceptedSet returns the types the server accepts, plus protocol messages that
+// are always sent. A nil result means no list has been received yet, so every
+// type is sent: the initial registration exchange depends on it.
+func acceptedSet(types []string) map[string]bool {
+	if len(types) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(types)+3)
+	for _, t := range types {
+		set[t] = true
+	}
+	for _, t := range []string{"register", "resynchronize", "operation-result"} {
+		set[t] = true
+	}
+	return set
+}
+
+func isAccepted(accepted map[string]bool, m Message) bool {
+	if accepted == nil {
+		return true
+	}
+	t, _ := m["type"].(string)
+	return accepted[t]
+}
+
+func countHeld(accepted map[string]bool, msgs []Message) int {
+	n := 0
+	for _, m := range msgs {
+		if !isAccepted(accepted, m) {
+			n++
+		}
+	}
+	return n
 }
 
 func isSpecialMessageType(msgType string) bool {

@@ -134,7 +134,7 @@ sequenceDiagram
     P->>Ex: Send(msg) — queued, does not wake the loop
     Note over Ex: timer fires, or woken by ping,<br/>an operation result, or a backlog
     Ex->>Ex: prepend "register" if not registered
-    Ex->>Ex: take up to 100 messages,<br/>drop types the server does not accept
+    Ex->>Ex: take up to 100 messages of accepted types,<br/>hold the rest in the queue
     Ex->>S: POST /message-system (bpickle)
     alt transport error or non-2xx
         Ex->>Ex: re-queue the batch

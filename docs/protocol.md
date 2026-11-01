@@ -60,8 +60,8 @@ Body (a dict):
 | `total-messages` | Number of messages in this batch |
 
 Once the server has sent `accepted-types`, outbound messages of other types are
-dropped before sending. `register`, `resynchronize` and `operation-result` are
-always sent.
+held in the queue and sent once a later `accepted-types` includes them.
+`register`, `resynchronize` and `operation-result` are always sent.
 
 ### Response
 
