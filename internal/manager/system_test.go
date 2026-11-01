@@ -651,7 +651,7 @@ func TestScriptExecHandler_AttachmentPathTraversal(t *testing.T) {
 func TestScriptExec_ExecFailureReportsReason(t *testing.T) {
 	dir := t.TempDir()
 	notExecutable := filepath.Join(dir, "not-executable")
-	if err := os.WriteFile(notExecutable, []byte("#!/bin/sh\n"), 0600); err != nil {
+	if err := os.WriteFile(notExecutable, []byte("#!/bin/sh\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 

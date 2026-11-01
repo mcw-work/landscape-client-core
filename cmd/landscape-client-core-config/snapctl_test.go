@@ -16,7 +16,7 @@ func installFakeSnapctl(t *testing.T, out string, code int) string {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "args.log")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + logPath + "\nprintf '%s' '" + out + "'\nexit " + strconv.Itoa(code) + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "snapctl"), []byte(script), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "snapctl"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))

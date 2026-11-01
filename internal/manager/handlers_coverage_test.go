@@ -36,9 +36,11 @@ func (b *blockingSnapd) WaitForChange(ctx context.Context, _ string) error { ret
 func (b *blockingSnapd) StartService(ctx context.Context, _, _ string) error {
 	return b.block(ctx)
 }
+
 func (b *blockingSnapd) StopService(ctx context.Context, _, _ string) error {
 	return b.block(ctx)
 }
+
 func (b *blockingSnapd) RestartService(ctx context.Context, _, _ string) error {
 	return b.block(ctx)
 }
@@ -417,7 +419,7 @@ func TestScriptExecHandler_MissingRequiredFields(t *testing.T) {
 
 func TestScriptExecHandler_ScriptDirCreateError(t *testing.T) {
 	snapCommon := filepath.Join(t.TempDir(), "file")
-	if err := os.WriteFile(snapCommon, nil, 0600); err != nil {
+	if err := os.WriteFile(snapCommon, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	h := manager.NewScriptExecHandler(snapCommon, nil)
@@ -435,7 +437,7 @@ func TestScriptExecHandler_ScriptDirCreateError(t *testing.T) {
 func TestScriptExecHandler_ScriptWriteError(t *testing.T) {
 	snapCommon := t.TempDir()
 	// A directory where the script file should go makes WriteFile fail.
-	if err := os.MkdirAll(filepath.Join(snapCommon, "scripts", "1", "script"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(snapCommon, "scripts", "1", "script"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	h := manager.NewScriptExecHandler(snapCommon, nil)
@@ -472,7 +474,7 @@ func TestScriptExecHandler_AttachmentWriteError(t *testing.T) {
 // Start, not with an exit status, so the reason must be reported.
 func TestScriptExecHandler_InterpreterExecFormatError(t *testing.T) {
 	interp := filepath.Join(t.TempDir(), "bogus")
-	if err := os.WriteFile(interp, []byte("\x00\x01\x02not an executable"), 0700); err != nil {
+	if err := os.WriteFile(interp, []byte("\x00\x01\x02not an executable"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	h := manager.NewScriptExecHandler(t.TempDir(), nil)

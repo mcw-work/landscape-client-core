@@ -12,9 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/canonical/landscape-client-core/internal/exchange"
 	"github.com/canonical/landscape-client-core/internal/persist"
-	"golang.org/x/sync/errgroup"
 )
 
 // Runner manages a set of monitor plugins, running each in its own goroutine

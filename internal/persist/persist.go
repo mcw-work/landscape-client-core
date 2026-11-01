@@ -95,7 +95,7 @@ func (s *Store) Save(state *State) error {
 
 func (s *Store) saveLocked(state *State) error {
 	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("persist: cannot create state directory: %w", err)
 	}
 
@@ -131,7 +131,7 @@ func (s *Store) saveLocked(state *State) error {
 	// Keep the previous good state as a backup, mirroring Python's Persist, so a
 	// truncated write or disk corruption is recoverable rather than fatal.
 	if existing, err := os.ReadFile(s.path); err == nil {
-		if err := os.WriteFile(s.path+".old", existing, 0600); err != nil {
+		if err := os.WriteFile(s.path+".old", existing, 0o600); err != nil {
 			slog.Warn("persist: cannot write backup", "error", err)
 		}
 	}

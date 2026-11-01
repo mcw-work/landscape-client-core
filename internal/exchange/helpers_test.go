@@ -98,7 +98,7 @@ func TestSpool_SaveLeavesNoTempFiles(t *testing.T) {
 func TestSpool_LoadUnreadableIsError(t *testing.T) {
 	// A directory at the spool path is an I/O error, not a corrupt file.
 	path := filepath.Join(t.TempDir(), "queue.json")
-	if err := os.Mkdir(path, 0700); err != nil {
+	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatalf("Mkdir: %v", err)
 	}
 	if _, err := newSpool(path).load(); err == nil {

@@ -37,7 +37,7 @@ func (m *mockSink) Messages() []exchange.Message {
 // writeFixture writes content to a file in a temp directory.
 func writeFixture(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("writeFixture: %v", err)
 	}
 }

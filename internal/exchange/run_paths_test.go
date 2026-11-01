@@ -159,7 +159,7 @@ func messageTypes(t *testing.T, payload map[string]any) []string {
 
 func TestRun_StateLoadErrorIsReturned(t *testing.T) {
 	ex, _, dir := newExchangeAt(t, "http://127.0.0.1:1")
-	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte("{broken"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte("{broken"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	err := ex.Run(context.Background())
@@ -208,7 +208,7 @@ func TestRun_SpoolIOErrorsAreLoggedNotFatal(t *testing.T) {
 	markRegistered(t, store)
 
 	spoolPath := filepath.Join(dir, "queue.json")
-	if err := os.Mkdir(spoolPath, 0700); err != nil {
+	if err := os.Mkdir(spoolPath, 0o700); err != nil {
 		t.Fatalf("Mkdir: %v", err)
 	}
 	ex.SetSpool(spoolPath)
@@ -492,7 +492,7 @@ func TestPerformExchange_StateSaveErrorIsReturned(t *testing.T) {
 	}
 	state.SecureID = "sec123"
 	// Update's read-modify-write fails on a corrupt file.
-	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte("{broken"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte("{broken"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -538,7 +538,7 @@ func TestSpool_SaveRenameFailureRemovesTempFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "queue.json")
 	// A non-empty directory at the spool path cannot be renamed over.
-	if err := os.MkdirAll(filepath.Join(path, "child"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(path, "child"), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	err := newSpool(path).save([]Message{{"type": "x"}})

@@ -48,7 +48,7 @@ func TestSpool_MissingFileIsEmptyNotAnError(t *testing.T) {
 
 func TestSpool_CorruptFileIsEmptyNotAnError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "queue.json")
-	if err := os.WriteFile(path, []byte("{not json"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 

@@ -224,7 +224,7 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 
 	// Create per-operation script directory.
 	scriptDir := filepath.Join(h.snapCommon, "scripts", fmt.Sprintf("%d", opID))
-	if err := os.MkdirAll(scriptDir, 0700); err != nil {
+	if err := os.MkdirAll(scriptDir, 0o700); err != nil {
 		return err
 	}
 	defer func() {
@@ -234,7 +234,7 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 	// Write script with shebang.
 	scriptPath := filepath.Join(scriptDir, "script")
 	scriptContent := "#!" + interpreter + "\n" + code
-	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0700); err != nil {
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o700); err != nil {
 		return err
 	}
 
@@ -261,7 +261,7 @@ func (h *ScriptExecHandler) Handle(ctx context.Context, msg exchange.Message, re
 					fmt.Sprintf("execute-script: attachment filename %q is invalid", filename))
 				return nil
 			}
-			if err := os.WriteFile(destPath, data, 0600); err != nil {
+			if err := os.WriteFile(destPath, data, 0o600); err != nil {
 				return err
 			}
 		}

@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/canonical/landscape-client-core/internal/config"
 	"github.com/canonical/landscape-client-core/internal/exchange"
 	"github.com/canonical/landscape-client-core/internal/manager"
@@ -26,7 +28,6 @@ import (
 	"github.com/canonical/landscape-client-core/internal/snapd"
 	"github.com/canonical/landscape-client-core/internal/transport"
 	"github.com/canonical/landscape-client-core/internal/version"
-	"golang.org/x/sync/errgroup"
 )
 
 var watchdogInterval = 30 * time.Second

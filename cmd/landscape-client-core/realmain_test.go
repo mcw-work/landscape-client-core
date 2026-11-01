@@ -32,7 +32,7 @@ func installSnapctlConfig(t *testing.T, values map[string]string, setCode int) {
 	}
 	b.WriteString("esac\n")
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "snapctl"), []byte(b.String()), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "snapctl"), []byte(b.String()), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
@@ -133,7 +133,7 @@ func TestRealMain_DaemonFailureExitsNonZero(t *testing.T) {
 	installSnapctlConfig(t, validConfig("http://127.0.0.1:1/message-system"), 0)
 	snapCommon := t.TempDir()
 	t.Setenv("SNAP_COMMON", snapCommon)
-	if err := os.WriteFile(filepath.Join(snapCommon, "state.json"), []byte("{corrupt"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(snapCommon, "state.json"), []byte("{corrupt"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -192,7 +192,7 @@ func TestRealMain_RunsDaemonUntilCancelled(t *testing.T) {
 func TestRun_RunnerFailureStopsDaemon(t *testing.T) {
 	snapCommon := t.TempDir()
 	statePath := filepath.Join(snapCommon, "state.json")
-	if err := os.WriteFile(statePath, []byte("{corrupt"), 0600); err != nil {
+	if err := os.WriteFile(statePath, []byte("{corrupt"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	tc, err := transport.New(transport.Config{})

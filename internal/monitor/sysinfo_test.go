@@ -543,7 +543,7 @@ func makeNetMock(t *testing.T, sysNetPath string) (*NetworkDevice, func() ([]net
 		Flags:        net.FlagUp | net.FlagBroadcast,
 	}
 
-	if err := os.MkdirAll(filepath.Join(sysNetPath, "eth0"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(sysNetPath, "eth0"), 0o755); err != nil {
 		t.Fatalf("mkdir eth0: %v", err)
 	}
 	writeFixture(t, filepath.Join(sysNetPath, "eth0", "speed"), "1000\n")
@@ -664,7 +664,7 @@ func TestNetworkDevice_DataWatcherChange(t *testing.T) {
 	dir := t.TempDir()
 
 	// First: speed=1000
-	if err := os.MkdirAll(filepath.Join(dir, "eth0"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "eth0"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeFixture(t, filepath.Join(dir, "eth0", "speed"), "1000\n")

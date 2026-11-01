@@ -47,7 +47,7 @@ func TestLoadExistingFile(t *testing.T) {
 		AcceptedTypesHash:      []byte("hash-xyz"),
 	}
 	data, _ := json.Marshal(want)
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -131,7 +131,7 @@ func TestAtomicWriteOverwritesCorruptTmp(t *testing.T) {
 	// Pre-create a corrupt file matching the temp-file naming pattern.
 	// Save must succeed regardless (os.CreateTemp uses unique names).
 	corruptTmp := path + ".tmpcorrupt"
-	if err := os.WriteFile(corruptTmp, []byte("CORRUPT"), 0600); err != nil {
+	if err := os.WriteFile(corruptTmp, []byte("CORRUPT"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,7 +184,7 @@ func TestLoadCorruptJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
 
-	if err := os.WriteFile(path, []byte("{not valid json"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("{not valid json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -419,7 +419,7 @@ func TestSetPluginState_DoesNotRollBackOtherFields(t *testing.T) {
 	}
 
 	// Corrupt the file so the next Update fails at decode.
-	if err := os.WriteFile(path, []byte("{not json"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("corrupt: %v", err)
 	}
 
@@ -430,7 +430,7 @@ func TestSetPluginState_DoesNotRollBackOtherFields(t *testing.T) {
 
 	// Repair the file by writing known-good content, then confirm the failed
 	// save did not overwrite it with the stale snapshot.
-	if err := os.WriteFile(path, []byte(`{"secure_id":"SECRET-2-ROTATED","outbound_sequence":99}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"secure_id":"SECRET-2-ROTATED","outbound_sequence":99}`), 0o600); err != nil {
 		t.Fatalf("repair: %v", err)
 	}
 	got, err := store.Load()
@@ -476,7 +476,7 @@ func TestLoad_RecoversFromBackupWhenStateIsCorrupt(t *testing.T) {
 	}
 
 	// Simulate a truncated write.
-	if err := os.WriteFile(path, []byte(`{"secure_id":"GOO`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"secure_id":"GOO`), 0o600); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 
@@ -496,7 +496,7 @@ func TestLoad_CorruptWithNoBackupIsAnError(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
-	if err := os.WriteFile(path, []byte("{not json"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 

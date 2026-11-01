@@ -7,8 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/canonical/landscape-client-core/internal/exchange"
 	"golang.org/x/sync/semaphore"
+
+	"github.com/canonical/landscape-client-core/internal/exchange"
 )
 
 // Runner registers Handlers with a CommandSource and dispatches inbound

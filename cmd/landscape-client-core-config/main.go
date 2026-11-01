@@ -160,7 +160,7 @@ func (w *wizard) readPassword(prompt string) (string, error) {
 // Run executes the interactive configuration wizard.
 func (w *wizard) Run() error {
 	// Step 1: Landscape Edition
-	if _, err := fmt.Fprintln(w.io.out, "Manage this machine with Landscape (https://ubuntu.com/landscape)"); err != nil {
+	if _, err := fmt.Fprintln(w.io.out, "Manage this machine with Landscape (https://landscape.canonical.com)"); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(w.io.out, ""); err != nil {

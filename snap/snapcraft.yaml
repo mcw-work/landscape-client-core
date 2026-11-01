@@ -1,7 +1,7 @@
 name: landscape-client-core
 title: Landscape Client for Ubuntu Core
 base: core26
-version: 26.10
+version: "26.10"
 summary: Landscape client for Ubuntu Core devices
 description: |
   Manages Ubuntu Core devices with Canonical Landscape.

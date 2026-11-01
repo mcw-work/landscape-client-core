@@ -46,6 +46,7 @@ func (c *rebootSeqClient) ListSnaps(_ context.Context) ([]snapd.SnapInfo, error)
 func (c *rebootSeqClient) ListServices(_ context.Context) ([]snapd.ServiceInfo, error) {
 	return nil, nil
 }
+
 func (c *rebootSeqClient) InstallSnap(_ context.Context, _ string, _ snapd.InstallOptions) (string, error) {
 	return "", nil
 }
@@ -176,7 +177,7 @@ func makeProcTree(t *testing.T, dir string, procStatContent, uptimeStr string, p
 	writeFixture(t, filepath.Join(dir, "uptime"), uptimeStr)
 	for pid, files := range pids {
 		pidDir := filepath.Join(dir, fmt.Sprintf("%d", pid))
-		if err := os.MkdirAll(pidDir, 0700); err != nil {
+		if err := os.MkdirAll(pidDir, 0o700); err != nil {
 			t.Fatalf("makeProcTree: mkdir %s: %v", pidDir, err)
 		}
 		writeFixture(t, filepath.Join(pidDir, "stat"), files.stat)
@@ -279,7 +280,7 @@ func TestTemperature_HappyPath(t *testing.T) {
 	dir := t.TempDir()
 	// Create a fake thermal_zone0 directory with a temp file (42°C = 42000 millideg).
 	zoneDir := filepath.Join(dir, "thermal_zone0")
-	if err := os.MkdirAll(zoneDir, 0700); err != nil {
+	if err := os.MkdirAll(zoneDir, 0o700); err != nil {
 		t.Fatalf("mkdir %s: %v", zoneDir, err)
 	}
 	writeFixture(t, filepath.Join(zoneDir, "temp"), "42000\n")
@@ -365,7 +366,7 @@ func TestTemperature_ZoneOrderIsDeterministic(t *testing.T) {
 		{"thermal_zone2", "55000"},
 	} {
 		zoneDir := filepath.Join(dir, z.name)
-		if err := os.MkdirAll(zoneDir, 0755); err != nil {
+		if err := os.MkdirAll(zoneDir, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
 		writeFixture(t, filepath.Join(zoneDir, "temp"), z.temp+"\n")

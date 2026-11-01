@@ -63,7 +63,7 @@ func assertOnlyEntries(t *testing.T, dir string, want ...string) {
 func TestLoad_UnreadableStateIsError(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "state.json")
-	if err := os.Mkdir(path, 0700); err != nil {
+	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatalf("Mkdir: %v", err)
 	}
 	_, err := persist.New(path).Load()
@@ -90,10 +90,10 @@ func TestSave_UnwritableDirectoryIsError(t *testing.T) {
 		t.Skip("root ignores directory permissions")
 	}
 	dir := t.TempDir()
-	if err := os.Chmod(dir, 0500); err != nil {
+	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatalf("Chmod: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
 	err := persist.New(filepath.Join(dir, "state.json")).Save(&persist.State{SecureID: "x"})
 	if err == nil || !strings.Contains(err.Error(), "cannot create temp file") {
@@ -106,7 +106,7 @@ func TestSave_RenameFailureIsErrorAndRemovesTempFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
 	// A non-empty directory at the target path cannot be renamed over.
-	if err := os.MkdirAll(filepath.Join(path, "child"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(path, "child"), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestSave_BackupFailureIsLoggedAndStateIsSaved(t *testing.T) {
 	if err := store.Save(&persist.State{SecureID: "first"}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := os.Mkdir(path+".old", 0700); err != nil {
+	if err := os.Mkdir(path+".old", 0o700); err != nil {
 		t.Fatalf("Mkdir: %v", err)
 	}
 

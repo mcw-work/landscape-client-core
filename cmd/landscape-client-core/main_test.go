@@ -11,7 +11,7 @@ import (
 func TestSnapctlLoader_Get_Success(t *testing.T) {
 	tmp := t.TempDir()
 	script := filepath.Join(tmp, "snapctl")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\necho testvalue"), 0755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho testvalue"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -33,7 +33,7 @@ func TestSnapctlLoader_Get_Success(t *testing.T) {
 func TestSnapctlLoader_Get_Error(t *testing.T) {
 	tmp := t.TempDir()
 	script := filepath.Join(tmp, "snapctl")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 1"), 0755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 1"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,7 +53,7 @@ func TestSnapctlLoader_Get_Whitespace(t *testing.T) {
 	tmp := t.TempDir()
 	script := filepath.Join(tmp, "snapctl")
 	// printf avoids a trailing newline being added by echo, but we test trimming.
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '  trimmed  \\n'"), 0755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '  trimmed  \\n'"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

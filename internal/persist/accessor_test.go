@@ -26,7 +26,7 @@ func TestAccessor_NilStateLoadsFromDisk(t *testing.T) {
 
 func TestAccessor_NilStateCorruptFileIsError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	if err := os.WriteFile(path, []byte("{broken"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("{broken"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	var v map[string]any
@@ -49,7 +49,7 @@ func TestAccessor_UndecodablePluginStateIsError(t *testing.T) {
 func TestSave_ParentIsAFileIsError(t *testing.T) {
 	dir := t.TempDir()
 	blocker := filepath.Join(dir, "blocker")
-	if err := os.WriteFile(blocker, nil, 0600); err != nil {
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	store := persist.New(filepath.Join(blocker, "state.json"))
