@@ -1,64 +1,14 @@
-# landscape-client-core Documentation
+# Documentation
 
-`landscape-client-core` is the Go implementation of the Landscape management client for Ubuntu Core 24 devices. It is fully wire-compatible with the Landscape server and replaces the Python-based `landscape-client` on Ubuntu Core.
-
-## Documentation Index
-
-| Document | Description |
+| Document | Read it for |
 |---|---|
-| [Architecture](architecture.md) | Component overview, data flow, and package relationships |
-| [Configuration](configuration.md) | All configuration keys, defaults, validation, and the interactive wizard |
-| [Monitoring Plugins](monitoring-plugins.md) | Every system metric plugin and what it reports |
-| [Management Commands](management-commands.md) | Inbound commands the client handles (snap, service, shutdown) |
-| [Remote Script Execution](remote-script-execution.md) | Detailed reference for the `execute-script` handler |
-| [Wire Protocol](protocol.md) | bpickle encoding, exchange protocol, and message formats |
+| [Architecture](architecture.md) | How the daemon is built: components, goroutines, data flow, state, shutdown |
+| [Configuration](configuration.md) | Every config key, the snap hooks, the wizard, and the confdb view |
+| [Wire protocol](protocol.md) | bpickle encoding, the exchange and ping requests, registration |
+| [Monitoring plugins](monitoring-plugins.md) | What each plugin reports, how often, and from where |
+| [Management commands](management-commands.md) | Inbound commands the client executes and the results it returns |
+| [Remote script execution](remote-script-execution.md) | The `execute-script` handler in detail |
+| [Concurrency](concurrency.md) | Ownership, cancellation and locking rules for contributors |
 
-## Quick Start
-
-### Install
-
-```bash
-sudo snap install landscape-client-core
-```
-
-### Configure
-
-Use the interactive wizard:
-
-```bash
-landscape-client-core.config
-```
-
-Or set configuration keys directly:
-
-```bash
-sudo snap set landscape-client-core \
-  account-name=my-account \
-  registration-key=my-key \
-  computer-title="My Device" \
-  url=https://landscape.canonical.com/message-system
-```
-
-### Status
-
-The client runs as a background daemon. Check its status with:
-
-```bash
-sudo snap services landscape-client-core
-```
-
-View logs:
-
-```bash
-sudo snap logs landscape-client-core -f
-```
-
-## What It Does
-
-Once configured and running the client:
-
-1. **Registers** with the Landscape server using the account name and registration key.
-2. **Collects** system metrics (CPU, memory, network, snap packages, hardware info, etc.) and reports them to the server on each exchange.
-3. **Listens** for management commands from the Landscape dashboard (install/remove snaps, manage services, reboot, execute scripts).
-4. **Executes** received commands and reports results back to the server.
-5. **Pings** the server periodically to detect pending messages between full exchanges.
+Historical review notes and delivery plans are kept in [archive/](archive/).
+They describe past work, not the current code.

@@ -1,180 +1,119 @@
-# Wire Protocol
+# Wire protocol
 
-This document describes the binary wire format and the higher-level exchange protocol used by `landscape-client-core` when communicating with the Landscape server.
+The client speaks Landscape message API `3.3`. Every request and response body
+is bpickle-encoded except the ping request, which is a form POST.
 
-## bpickle Encoding
+## bpickle
 
-All message payloads between the client and server use **bpickle** — a compact binary encoding that is a strict subset of Python's pickle protocol designed for the Landscape wire format.
+bpickle is Landscape's compact, Python-compatible serialisation format
+([internal/bpickle](../internal/bpickle/bpickle.go)).
 
-### Type Encoding
-
-| Go Type | Wire Prefix | Example |
+| Go value | Encoding | Example |
 |---|---|---|
 | `nil` | `n` | `n` |
-| `bool` false | `b0` | `b0` |
-| `bool` true | `b1` | `b1` |
-| `int64` | `i<decimal>;` | `i42;` |
-| `float64` | `f<repr>;` | `f3.14;` or `f3.0;` |
+| `bool` | `b0` / `b1` | `b1` |
+| any integer type | `i<decimal>;` | `i42;` |
+| `float32`, `float64` | `f<repr>;` (whole numbers keep `.0`) | `f3.0;` |
 | `[]byte` | `s<len>:<bytes>` | `s5:hello` |
-| `string` | `u<len>:<utf8>` | `u5:hello` |
-| `[]any` | `l<items>;` | `lb1i2;u3:foo;` |
-| `bpickle.Tuple` | `t<items>;` | `ti1;i2;;` |
-| `map[string]any` | `d<key><val>...;` | `du4:typeu8:register;` |
-| `bpickle.BytesDict` | `d<s-key><val>...;` | `ds4:typeu8:register;` |
+| `string` | `u<len>:<utf-8>` | `u5:hello` |
+| `[]any` | `l<items>;` | `li1;i2;;` |
+| `bpickle.Tuple` | `t<items>;` | `ti1;f0.5;;` |
+| `map[string]any` | `d<key><value>...;` with `u` keys | `du4:typeu8:register;` |
+| `bpickle.BytesDict` | `d<key><value>...;` with `s` keys | `ds4:typeu8:register;` |
 
-**Notes:**
-- Dict keys are always sorted alphabetically for deterministic output.
-- Whole-number floats include a `.0` suffix (e.g. `f3.0;`) for Python compatibility.
-- String (`u`) keys and bytes (`s`) keys both unmarshal to Go `string` values.
+Dict keys are sorted, so output is deterministic. When decoding, both `s` and
+`u` keys become Go `string`s, and tuples become `[]any`. Decoding stops at a
+nesting depth of 100.
 
-### Example
+## Exchange
 
-The following Go value:
-
-```go
-map[string]any{
-    "type": "register",
-    "api":  "3.3",
-}
+```mermaid
+sequenceDiagram
+    participant C as client
+    participant S as server
+    C->>S: POST url<br/>X-Message-API: 3.3<br/>X-Computer-ID: secure-id<br/>X-Exchange-Token: token<br/>body: bpickle payload
+    S-->>C: 200, bpickle response
 ```
 
-Encodes as:
+### Request
 
-```
-d u3:api u3:3.3; u4:type u8:register; ;
-```
+Headers:
 
-(whitespace added for readability; actual encoding has no spaces)
-
-### Nested Messages
-
-The full exchange payload is a list of messages:
-
-```go
-[]any{
-    map[string]any{"type": "cpu-usage", ...},
-    map[string]any{"type": "memory-info", ...},
-}
-```
-
-Encoded as a bpickle list (`l...;`) of bpickle dicts.
-
----
-
-## Exchange Protocol
-
-The exchange protocol is a request-response loop over HTTPS. The client periodically POSTs a payload to the message-system URL and processes the server's response.
-
-### Request Format
-
-HTTP POST to the configured `url` (e.g. `https://landscape.canonical.com/message-system`).
-
-**Headers:**
-
-```
-Content-Type: application/octet-stream
-User-Agent: landscape-client/<version>
-```
-
-**Body:** bpickle-encoded list of messages.
-
-The payload structure is a `map[string]any` containing:
-
-| Field | Type | Description |
-|---|---|---|
-| `server-uuid` | string | Server identity (from last `set-id`) |
-| `exchange-token` | string | Rotating auth token |
-| `sequence` | int64 | Outbound message sequence counter |
-| `accepted-types-hash` | []byte | MD5 of accepted types (omitted if changed) |
-| `accepted-types` | []string | Accepted message types (only if hash changed or first exchange) |
-| `messages` | []any | List of outbound messages |
-
-### Response Format
-
-The server returns a bpickle-encoded `map[string]any`:
-
-| Field | Type | Description |
-|---|---|---|
-| `next-expected-sequence` | int64 | ACK: server confirms it received messages up to this sequence |
-| `messages` | []any | List of inbound command messages |
-
-If `next-expected-sequence` is lower than the last sent sequence, the un-ACK'd messages are re-queued for the next exchange.
-
-### Exchange Intervals
-
-| Condition | Interval |
+| Header | Value |
 |---|---|
-| Normal (registered, no pending) | `exchange-interval` (default 15 min) |
-| Pending messages in queue | `urgent-exchange-interval` (default 1 min) |
-| Not yet registered | `urgent-exchange-interval` |
-| Just registered (first exchange after `set-id`) | `urgent-exchange-interval` (to deliver device info quickly) |
+| `Content-Type` | `application/octet-stream` |
+| `User-Agent` | `landscape-client/<snap version>`. The server uses this to decide snap-monitoring support. |
+| `X-Message-API` | `3.3` |
+| `X-Computer-ID` | Secure ID. Omitted until registered. |
+| `X-Exchange-Token` | Token from the previous response, if any. |
 
-The exchange loop can also be woken immediately by the ping subsystem calling `TriggerExchange()`.
+Body (a dict):
 
----
+| Key | Value |
+|---|---|
+| `server-api`, `client-api` | `"3.3"` |
+| `sequence` | Sequence number of the first message in this batch |
+| `next-expected-sequence` | Number of server messages received so far |
+| `accepted-types` | MD5 hash of the server's accepted-types list (empty until received) |
+| `client-accepted-types` | Sorted list of inbound types the client handles. Sent only while there is no accepted-types hash. |
+| `messages` | Up to 100 outbound messages |
+| `total-messages` | Number of messages in this batch |
 
-## Protocol State Machine
+Once the server has sent `accepted-types`, outbound messages of other types are
+dropped before sending. `register`, `resynchronize` and `operation-result` are
+always sent.
 
-### Registration
+### Response
 
-On first run (no `SecureID` in persist store), the client sends a `register` message:
+| Key | Effect |
+|---|---|
+| `next-expected-sequence` | Server ACK. Messages at or after it are re-queued and resent. |
+| `next-exchange-token` | Stored and sent as `X-Exchange-Token` next time. |
+| `messages` | Inbound messages, processed in order. |
+
+A non-2xx status re-queues the whole batch. 429 and 5xx also start the
+exchange backoff described in
+[architecture.md](architecture.md#outbound-telemetry-to-the-server). Responses
+are capped at 4 MiB and redirects are not followed.
+
+### Messages handled by the exchange
+
+| Type | Effect |
+|---|---|
+| `set-id` | Store `id` as secure ID and `insecure-id`; clear all plugin state so plugins report in full. |
+| `accepted-types` | Store `types` and their hash (`md5(";".join(types))`, in server order). |
+| `resynchronize` | Clear plugin state; queue a `resynchronize` reply carrying the `operation-id`. Sequence numbers are kept. |
+| `unknown-id` | Clear both IDs; the next exchange registers again. |
+| `registration` | Log. `unknown-account` and `max-pending-computers` are logged as failures. |
+| `registration-complete` | Log. |
+
+Every other type goes to its subscribers; see
+[management-commands.md](management-commands.md). `set-intervals` is
+subscribed in `main` and updates the ping interval from its `ping` field.
+
+## Registration
+
+While the state has no secure ID, each exchange puts this message at the front
+of the batch:
 
 ```go
 map[string]any{
     "type":                  "register",
     "api":                   "3.3",
-    "account_name":          "my-account",
-    "registration_password": "my-key",
-    "computer_title":        "My Device",
-    "hostname":              "ubuntu-device",
-    "machine_id":            "<machine-id>",
-    "tags":                  "tag1,tag2",
-    "access_group":          "my-group",
+    "account_name":          cfg.AccountName,
+    "registration_password": cfg.RegistrationKey,
+    "computer_title":        cfg.ComputerTitle,
+    "hostname":              os.Hostname(),
+    "machine_id":            "<contents of /etc/machine-id>",
+    "tags":                  cfg.Tags,
+    "access_group":          cfg.AccessGroup,
 }
 ```
 
-The server responds with a `set-id` message (on success) or a `registration` message with an error:
+The server answers with `registration` (pending or failed) and eventually
+`set-id`.
 
-```go
-// set-id (success)
-map[string]any{
-    "type":       "set-id",
-    "id":         "<secure-id>",
-    "insecure-id": "<insecure-id>",
-}
-
-// registration (pending/failed)
-map[string]any{
-    "type":    "registration",
-    "info":    "account_name",  // or "registration_password", "pending"
-}
-```
-
-### Special Inbound Message Types
-
-These messages are handled by the exchange loop itself, not by manager handlers:
-
-| Message type | Effect |
-|---|---|
-| `set-id` | Saves `SecureID` and `InsecureID` to persist store; clears plugin state; triggers urgent next exchange |
-| `accepted-types` | Updates the list of message types the server accepts; hashes the list |
-| `set-intervals` | Updates exchange and ping intervals |
-| `resynchronize` | Clears all plugin state; sends `resynchronize-response` ack |
-| `unknown-id` | Clears `SecureID` and `InsecureID`; triggers re-registration |
-| `registration` | Logs registration status |
-| `registration-complete` | Logs registration confirmation |
-
-### API Version
-
-All exchanges advertise API version `3.3` in the `register` message and in all exchange payloads via the `api` field.
-
----
-
-## Ping Protocol
-
-The ping subsystem uses a separate, lighter-weight HTTP request to detect pending messages between full exchanges.
-
-**Request:**
+## Ping
 
 ```
 POST <ping-url>
@@ -183,28 +122,22 @@ Content-Type: application/x-www-form-urlencoded
 insecure_id=<insecure-id>
 ```
 
-The ping URL defaults to the message-system URL with the path replaced:
+The response is a bpickle dict. If `messages` is `true`, the client starts an
+exchange immediately. No ping is sent until the device has an insecure ID.
+
+## Attachments
+
+`execute-script` attachments are fetched one by one:
 
 ```
-https://landscape.canonical.com/message-system → http://landscape.canonical.com/ping
-```
-
-**Response:** bpickle-encoded dict. If the `messages` key is `true`, the ping loop calls `TriggerExchange()` to wake the exchange loop immediately.
-
-The ping loop does nothing if `InsecureID` is empty (device not yet registered).
-
----
-
-## Attachment Protocol
-
-Script attachments are fetched via individual GET requests:
-
-```
-GET https://<host>/attachment/<id>
+GET <url with last path segment replaced by attachment/><id>
 X-Computer-ID: <secure-id>
-User-Agent: landscape-client/<version>
 ```
 
-The attachment base URL is derived by stripping the last path segment from the message-system URL and appending `attachment/`.
+For example `https://landscape.canonical.com/message-system` gives
+`https://landscape.canonical.com/attachment/42`. The body is the raw file.
 
-The server returns the raw attachment bytes on HTTP 200. Any non-2xx response is returned as an error, causing the script execution to be aborted with `result-code=104`.
+## Timeouts
+
+Connections and TLS handshakes time out after 30 s. A whole request times out
+after 600 s.

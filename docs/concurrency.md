@@ -1,158 +1,63 @@
-# Concurrency Design Guide
+# Concurrency
 
-This document describes the concurrency patterns used in landscape-client-core and why each pattern is used.
+Rules for adding or changing concurrent code. The runtime structure itself is
+described in [architecture.md](architecture.md#goroutines-and-lifecycle).
 
-## Goals
+## Ownership
 
-- Keep goroutine lifetimes explicit and bounded.
-- Make shutdown deterministic.
-- Avoid unbounded work queues and hidden background work.
-- Prefer simple ownership and cancellation rules over ad-hoc locking.
+- Every long-running component exposes `Run(ctx)` and returns promptly when
+  `ctx` is done. `main` starts them in one `errgroup`; a returned error stops
+  the whole daemon so snapd restarts it.
+- Every other goroutine is either tracked (manager handlers in a `WaitGroup`,
+  plugin goroutines in the monitor's `errgroup`) or short-lived with a single
+  owner.
+- Shutdown waits are bounded (5 s each), so a stuck goroutine cannot block
+  exit.
 
-## Goroutine Lifecycle Management
+## Contexts
 
-Long-running components (exchange loop, monitor runner, ping loop) are started with context-aware `Run(ctx)` methods.
+- The daemon context from `main` controls component lifetime.
+- Inbound commands run on the daemon context, not a per-exchange one, because
+  handlers outlive the exchange that delivered them.
+- Each operation derives its own cancellable context and registers it with
+  `OperationContextManager`, so `cancel-operation`, timeouts and shutdown all
+  stop it the same way.
+- Every I/O call takes a context. Calls to snapd, logind and `lshw` add their
+  own timeouts because the daemon context never expires on its own.
+- Do not store contexts in structs for reuse. The one exception is the
+  exchange's dispatch context, set once in `Run`.
 
-Rules:
+## Inbound dispatch
 
-- Each loop listens for `ctx.Done()` and exits quickly.
-- Shutdown paths use bounded waits where needed (for example, grace windows).
-- Background goroutines are either tracked (WaitGroup/errgroup) or are short-lived fire-once goroutines with clear ownership.
+The exchange calls subscriber callbacks synchronously, in server order. A
+callback must return quickly. `manager.Runner` acquires its semaphore in the
+callback and then hands the work to a goroutine. There is no extra queue
+between the exchange and the runner; the semaphore is the back-pressure.
 
-## Context Usage and Cancellation
+## Choosing a primitive
 
-Contexts carry cancellation and deadlines through component boundaries.
+| Need | Use | Example |
+|---|---|---|
+| Cap concurrent work | `semaphore.Weighted` | manager handlers |
+| Wait for background work at shutdown | `sync.WaitGroup` | manager handlers |
+| Related goroutines that fail together | `errgroup` | `run()`, monitor runner |
+| A single value read often, written rarely | `atomic.Value` | ping interval |
+| Several fields that must change together | `sync.Mutex` | see below |
 
-Patterns used:
+### Mutexes in use
 
-- Parent context from main controls service lifetime.
-- Child contexts are used for bounded operations (timeouts or final drain steps).
-- Operation-scoped contexts can be canceled when the server requests cancellation.
+| Location | Protects | Why not something lighter |
+|---|---|---|
+| `exchange.Exchange.mu` | `pending` queue, `handlers` map, `insecureID`, `dispatchCtx` | Slice and map updates are compound operations. |
+| `persist.Store.mu` | Read-modify-write of `state.json` | The exchange and plugins update different fields of one file. |
+| `manager.limitWriter.mu` | Remaining output budget and truncation flag | stdout and stderr write concurrently; the marker must be added exactly once. |
+| `manager.OperationContextManager.mu` | Operation ID to cancel function map | Map access from many handlers. |
+| `monitor.Heartbeat.mu` | Last-beat times | Plugins write while the watchdog reads. |
 
-Guidelines:
+Keep critical sections short, and put a one-line comment on each lock saying
+what it guards.
 
-- Always pass context into I/O and network operations.
-- Do not store contexts on structs for long-term reuse.
-- Derive child contexts close to the operation that needs them.
+## Testing
 
-## Inbound Dispatch Ownership
-
-Exchange invokes subscriber callbacks synchronously and in server-message order. Callbacks must return promptly or hand work to an owner that bounds its concurrency.
-
-The manager Runner acquires a weighted semaphore before handing off operation work, then tracks that work with a WaitGroup through shutdown. Exchange persists inbound sequence state after callback handoff and does not add a second queue between receipt and the bounded owner.
-
-## Semaphore Bounding (Plan 1)
-
-Handler execution can be bounded with a semaphore to prevent unbounded goroutine growth under bursty inbound traffic.
-
-Benefits:
-
-- Caps concurrent handler execution.
-- Provides backpressure instead of memory growth.
-- Works with context cancellation to avoid indefinite waits.
-
-Use this for work pools where throughput is important but hard upper limits are required.
-
-## WaitGroup Tracking (Plan 2)
-
-WaitGroups track in-flight asynchronous work so shutdown can wait for completion.
-
-Benefits:
-
-- No fire-and-forget behavior during shutdown.
-- Deterministic teardown and easier tests.
-- Explicit ownership of background tasks.
-
-Use WaitGroup when you only need completion tracking and not first-error propagation.
-
-## Operation Cancellation (Plan 3)
-
-Operation handlers can run with operation-scoped contexts that are tracked by operation ID.
-
-Benefits:
-
-- Mid-flight cancellation for long-running tasks.
-- Unified behavior for timeout, shutdown, and server-requested cancel.
-- Reduced wasted work after operation is no longer relevant.
-
-Design notes:
-
-- Register cancel funcs before dispatch.
-- Unregister cancel funcs when operation completes.
-- Return cancellation errors as operation results when appropriate.
-
-## errgroup Error Handling (Plan 4)
-
-`errgroup` is used when a set of related goroutines should fail together and report the first error.
-
-Benefits:
-
-- Shared cancellation across related goroutines.
-- Error propagation without custom channels.
-- Cleaner orchestration code than manual WaitGroup plus error plumbing.
-
-Use `errgroup` for tightly coupled goroutines where one failure should stop the group.
-
-## Atomic Patterns (Plan 5)
-
-Simple independently updated values are good candidates for atomic access.
-
-Current usage:
-
-- Ping interval uses `atomic.Value` with `time.Duration` in [internal/ping/ping.go](../internal/ping/ping.go).
-
-Why atomic is a fit here:
-
-- Single value with no multi-field invariant.
-- Frequent reads and occasional writes.
-- Lock-free access reduces synchronization overhead and complexity.
-
-Constraints:
-
-- Store/load must use a consistent concrete type (`time.Duration`).
-- Initialize atomic storage before first load.
-
-## Why Remaining Mutexes Are Retained
-
-Not all mutexes should be removed. Two mutexes are intentionally kept because they protect multi-step invariants.
-
-### Exchange mutex
-
-Location: [internal/exchange/exchange.go](../internal/exchange/exchange.go)
-
-Protects:
-
-- `pending` outbound queue
-- `handlers` subscription map
-- `insecureID` shared state
-
-Reason:
-
-- These values are read and written from multiple goroutines.
-- Operations involve compound steps (append/copy/read) that must be consistent.
-- Atomic primitives do not replace map/slice coordination safely.
-
-### limitWriter mutex
-
-Location: [internal/manager/system.go](../internal/manager/system.go)
-
-Protects:
-
-- remaining byte budget `n`
-- truncation state `truncated`
-- marker insertion behavior
-
-Reason:
-
-- stdout/stderr copy goroutines can call `Write` concurrently.
-- The writer must guarantee the truncation marker is appended once and state stays coherent.
-- This is a multi-variable invariant, so a mutex is the correct primitive.
-
-## Best Practices
-
-- Prefer context cancellation and ownership boundaries before adding locks.
-- Use semaphores for concurrency limits and WaitGroup/errgroup for lifecycle control.
-- Use atomics only for single-value state with clear type invariants.
-- Keep mutex critical sections small and focused on shared invariants.
-- Document why each lock exists and what it protects.
-- Verify concurrency changes with `go test -race`.
+Run `go test -race ./...` for any concurrency change. Timing-sensitive tests
+should also pass with `-count=3`.

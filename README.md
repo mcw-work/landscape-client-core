@@ -1,122 +1,69 @@
 # landscape-client-core
 
-A Go implementation of the Landscape client targeting Ubuntu Core 24 devices.
-It is a full replacement for the Python-based `landscape-client` on Ubuntu Core
-and is exactly wire-compatible with the Landscape Server (no server-side changes
-required).
+A Go implementation of the Landscape client for Ubuntu Core 26. It replaces the
+Python `landscape-client` on Ubuntu Core and is wire-compatible with the
+existing Landscape server.
 
-## Requirements
+The client registers the device with Landscape, reports system and snap
+telemetry, and runs management commands sent from the Landscape dashboard
+(snap install/remove/refresh, service control, reboot, scripts).
 
-- Go 1.25 or later
-- Ubuntu Core 24 (target platform)
+## Quick start
 
-## Building
+```bash
+sudo snap install landscape-client-core
+sudo landscape-client-core.config          # interactive wizard
+# or
+sudo snap set landscape-client-core \
+  account-name=my-account \
+  computer-title="My Device" \
+  url=https://landscape.canonical.com/message-system
+sudo snap logs -f landscape-client-core
+```
+
+The daemon stays disabled until `url`, `account-name` and `computer-title` are
+set. See [Configuration](docs/configuration.md) for every key.
+
+## Documentation
+
+Start with [Architecture](docs/architecture.md); the full index is in
+[docs/README.md](docs/README.md).
+
+## Development
+
+Requires Go 1.25 or later.
 
 ```bash
 make build   # go build ./...
 make test    # go test ./...
 make vet     # go vet ./...
-make lint    # golangci-lint run ./... (requires golangci-lint)
+make lint    # golangci-lint run ./...
 ```
 
-## Configuration
+### Wire-compatibility tests
 
-The client is configured via `snap set`. Available keys:
-
-| Key | Required | Default | Description |
-|-----|----------|---------|-------------|
-| `account-name` | yes | — | Landscape account name |
-| `registration-key` | no | — | Registration key for the account |
-| `computer-title` | yes | — | Display name for this device |
-| `url` | yes | — | Landscape message system URL (e.g. `https://landscape.canonical.com/message-system`) |
-| `exchange-interval` | no | `900` | Interval between regular exchanges (in seconds) |
-| `urgent-exchange-interval` | no | `60` | Interval for urgent exchanges (in seconds) |
-| `ping-interval` | no | `30` | Interval between ping messages (in seconds) |
-| `ssl-public-key` | no | — | Path to CA certificate for SSL verification |
-| `http-proxy` | no | — | HTTP proxy URL |
-| `https-proxy` | no | — | HTTPS proxy URL |
-| `access-group` | no | — | Landscape access group |
-| `tags` | no | — | Comma-separated tags for this device |
-| `log-level` | no | `info` | Log level (`debug`, `info`, `warning`, `error`) |
-
-Example:
-
-```
-sudo snap set landscape-client-core \
-  account-name=my-account \
-  computer-title="My Device" \
-  url=https://landscape.canonical.com/message-system
-```
-
-Note: `registration-key` is optional and only needed if the account requires explicit key authentication.
-
-Configuration is validated by the snap `configure` hook and stored under
-`$SNAP_COMMON`.
-
-## Wire Compatibility Tests
-
-The `internal/bpickle` package includes tests (build tag `compat`) that
-cross-validate Go bpickle encoding against the Python `landscape-client`
-implementation by running Python as a subprocess.
-
-**Prerequisites:**
-
-1. Clone `canonical/landscape-client` alongside this repo:
-   ```bash
-   git clone https://github.com/canonical/landscape-client ../landscape-client
-   ```
-2. Ensure Python 3 is available (`python3 --version`). No additional pip
-   packages are required — `landscape/lib/bpickle.py` uses only stdlib.
-
-**Run the compat tests:**
+Tests with the `compat` build tag cross-check the Go bpickle codec against the
+Python implementation. They need a checkout of `canonical/landscape-client` and
+`python3` (stdlib only):
 
 ```bash
-LANDSCAPE_CLIENT_PATH=../landscape-client \
-  go test -tags compat -v ./internal/bpickle/...
+git clone https://github.com/canonical/landscape-client ../landscape-client
+make compat LANDSCAPE_CLIENT_PATH=../landscape-client
 ```
 
-These tests are also run automatically by the
-`.github/workflows/compat.yml` CI workflow on every push to `main` and on
-pull requests that touch `internal/bpickle/`.
+CI runs these on pushes to `main` and on pull requests that touch
+`internal/bpickle/` ([compat.yml](.github/workflows/compat.yml)).
 
-## Building the Snap
-
-**Prerequisites:** [snapcraft](https://snapcraft.io/docs/snapcraft-overview)
-installed (`sudo snap install snapcraft --classic`).
-
-**Build locally (destructive mode — fastest, runs directly on the host):**
+### Building the snap
 
 ```bash
-snapcraft --destructive-mode
-```
-
-This produces `landscape-client-core_<version>_amd64.snap` (or the host
-arch) in the current directory.
-
-**Build in a clean LXD container (recommended for release builds):**
-
-```bash
-snapcraft
-```
-
-Snapcraft will spin up a `core24` LXD container automatically. Requires LXD
-to be initialised (`sudo lxd init --auto`).
-
-**Install the built snap on a Core 24 device:**
-
-```bash
+snapcraft                     # clean build in an LXD container
+snapcraft --destructive-mode  # faster, builds on the host (make snap)
 sudo snap install landscape-client-core_*.snap --dangerous
 ```
 
-`--dangerous` is required because the snap is unsigned. Production snaps are
-distributed via the Snap Store and install without this flag.
-
-**Validate the snapcraft.yaml without building:**
-
-```bash
-snapcraft lint
-```
+`--dangerous` is needed for locally built, unsigned snaps.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+GPL-2.0-only, matching the Python `landscape-client`. See [LICENSE](LICENSE).

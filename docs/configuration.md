@@ -1,142 +1,113 @@
 # Configuration
 
-## Configuration Keys
+Configuration is snap configuration: set it with `snap set`, read it with
+`snap get`. The daemon reads each key with `snapctl get` at startup, so changes
+take effect when the configure hook restarts it.
 
-Configuration is stored as snap configuration and managed via `snapctl`. All keys use the prefix `landscape-client-core:` when accessed externally (e.g. `snap get landscape-client-core account-name`).
+## Keys
 
-### Required Keys
+| Key | Required | Default | Description |
+|---|---|---|---|
+| `url` | yes | — | Message-system URL, e.g. `https://landscape.canonical.com/message-system`. Must start with `http://` or `https://`. |
+| `account-name` | yes | — | Landscape account name. |
+| `computer-title` | yes | — | Name shown in the Landscape dashboard. |
+| `registration-key` | no | — | Account registration key, if the account requires one. |
+| `exchange-interval` | no | `900` | Seconds between regular exchanges. |
+| `urgent-exchange-interval` | no | `60` | Seconds between exchanges while unregistered or while an operation result is waiting. |
+| `ping-interval` | no | `30` | Seconds between pings. |
+| `ping-url` | no | derived | Ping endpoint. Defaults to `http://<host of url>/ping`. |
+| `ssl-public-key` | no | — | Path to a PEM CA bundle. Replaces the system CAs. The daemon refuses to start if it cannot be read. |
+| `http-proxy` | no | — | Proxy for `http://` requests. |
+| `https-proxy` | no | — | Proxy for `https://` requests. |
+| `access-group` | no | — | Landscape access group, sent at registration. |
+| `tags` | no | — | Comma-separated tags, sent at registration. |
+| `log-level` | no | `info` | `debug`, `info`, `warn`/`warning`, or `error`. |
 
-All four required keys must be set before the daemon will start.
+Intervals are non-negative integers in seconds. The `install` and
+`post-refresh` hooks write the three interval defaults if they are unset.
 
-| Key | Description | Example |
-|---|---|---|
-| `account-name` | Landscape account name | `my-org` |
-| `registration-key` | Registration key for the account (shared secret) | `abc123` |
-| `computer-title` | Display name for this device in the Landscape dashboard | `"Factory Floor Pi #42"` |
-| `url` | Landscape message system URL | `https://landscape.canonical.com/message-system` |
+If neither proxy key matches a request's scheme, the standard
+`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` environment variables apply.
 
-### Optional Keys
-
-| Key | Default | Description |
-|---|---|---|
-| `exchange-interval` | `15m` | Interval between regular exchanges with the server |
-| `urgent-exchange-interval` | `1m` | Interval used when messages are pending or the device is unregistered |
-| `ping-interval` | `30s` | Interval between lightweight ping polls |
-| `ping-url` | *(derived)* | Ping endpoint URL. If empty, derived from `url` (e.g. `https://host/message-system` → `http://host/ping`) |
-| `ssl-public-key` | — | Path to a CA certificate file for TLS verification (replaces system CAs) |
-| `http-proxy` | — | HTTP proxy URL (e.g. `http://proxy.example.com:3128`) |
-| `https-proxy` | — | HTTPS proxy URL (e.g. `https://proxy.example.com:3128`) |
-| `access-group` | — | Landscape access group for this device |
-| `tags` | — | Comma-separated tags (e.g. `production,arm64`) |
-| `log-level` | `info` | Log verbosity: `debug`, `info`, `warning`, or `error` |
-
-### Duration Format
-
-Duration values (`exchange-interval`, `urgent-exchange-interval`, `ping-interval`) use Go's duration string format:
-
-- `30s` — 30 seconds
-- `5m` — 5 minutes
-- `1h30m` — 1 hour 30 minutes
-
-## Setting Configuration
-
-### Via snap set
+## Setting configuration
 
 ```bash
 sudo snap set landscape-client-core \
   account-name=my-account \
-  registration-key=my-key \
   computer-title="My Device" \
   url=https://landscape.canonical.com/message-system
 ```
 
-Multiple keys can be set in a single command. The configure hook validates the configuration after each `snap set` call.
-
-### Via the Interactive Wizard
-
-The `config` command provides a step-by-step interactive wizard:
+Self-hosted server with a private CA:
 
 ```bash
-landscape-client-core.config
-```
-
-The wizard:
-
-1. Asks whether you're using Canonical Hosted Landscape or a self-hosted server.
-2. Prompts for computer title, account name, and registration key (password-masked).
-3. Optionally collects HTTP/HTTPS proxy URLs, access group, and tags.
-4. Displays a summary for review.
-5. Writes all settings in a single batched `snapctl set` call.
-6. Restarts the daemon.
-
-### Reading Current Configuration
-
-```bash
-snap get landscape-client-core
-```
-
-Or for a specific key:
-
-```bash
-snap get landscape-client-core account-name
-```
-
-## Configure Hook Validation
-
-The snap `configure` hook runs `landscape-client-core --validate-config` on every `snap set` call. Validation behaviour:
-
-- **0 required keys set** (fresh install): passes silently — allows partial configuration.
-- **1–2 required keys set**: passes — still in-progress configuration.
-- **3+ required keys set**: full validation is run; all required keys must be present and valid.
-- **All 4 required keys set**: full validation; durations are parsed and URL format is checked.
-
-This means you can set keys incrementally without errors until you have all required keys present.
-
-### Daemon Lifecycle
-
-The daemon is installed disabled, so an unconfigured device does not crash-loop. After validation the hook manages the service:
-
-- **`url`, `account-name` and `computer-title` all set**: starts and enables the daemon, or restarts it if it is already running so the change takes effect.
-- **Any of them missing**: stops and disables the daemon.
-
-## Configuration File Location
-
-Configuration is managed entirely through snapctl and the snap configuration system. The raw values are stored by snapd, not in a user-visible file. Derived runtime state (device IDs, sequence numbers) is stored separately in:
-
-```
-/var/snap/landscape-client-core/common/client.state
-```
-
-This file is JSON and is written atomically. Do not edit it manually.
-
-## Self-Hosted Landscape
-
-For a self-hosted Landscape installation:
-
-```bash
+sudo cp my-ca.crt /var/snap/landscape-client-core/common/
 sudo snap set landscape-client-core \
   account-name=standalone \
-  registration-key="" \
-  computer-title="My Server" \
-  url=https://my-landscape.example.com/message-system \
+  computer-title="My Device" \
+  url=https://landscape.example.com/message-system \
   ssl-public-key=/var/snap/landscape-client-core/common/my-ca.crt
 ```
 
-If your server uses a self-signed or private CA certificate, copy the certificate to `$SNAP_COMMON` and set `ssl-public-key` to its path.
+### Wizard
 
-## Proxy Configuration
+`sudo landscape-client-core.config` asks for:
 
-```bash
-sudo snap set landscape-client-core \
-  https-proxy=https://proxy.example.com:3128
+1. Hosted or self-hosted. Self-hosted asks for the server's domain and builds
+   `url` as `https://<domain>/message-system`.
+2. Computer title and account name (required).
+3. Registration key, entered twice without echo (optional).
+4. HTTP and HTTPS proxies, access group, and tags (optional). Each tag must
+   match `[a-zA-Z0-9][a-zA-Z0-9-]*`.
+
+It shows a summary, then writes every non-empty value in one `snapctl set` so
+the configure hook only ever sees a complete configuration, and restarts the
+daemon.
+
+## Snap hooks
+
+```mermaid
+flowchart TB
+    set["snap set ..."] --> hook["configure hook"]
+    hook --> v{"--validate-config<br/>url, account-name and<br/>computer-title all set?"}
+    v -- "no" --> ok1["pass: partial config allowed"]
+    v -- "yes" --> load{"config.Load valid?"}
+    load -- "no" --> fail["hook fails, snap set is rejected"]
+    load -- "yes" --> sync["--sync-confdb<br/>write config to confdb view<br/>(failure only logged)"]
+    ok1 --> svc
+    sync --> svc{"required keys set?"}
+    svc -- "yes" --> start["start --enable, or restart if running"]
+    svc -- "no" --> stop["stop --disable"]
 ```
 
-The client uses the `https-proxy` for HTTPS URLs and `http-proxy` for HTTP URLs. If neither is set, `HTTP_PROXY`/`HTTPS_PROXY` environment variables are honoured.
+| Hook | Behaviour |
+|---|---|
+| `install`, `post-refresh` | Set `exchange-interval=900`, `urgent-exchange-interval=60`, `ping-interval=30` if unset. |
+| `configure` | Validate, publish to confdb, then start, restart or stop the daemon (diagram above). Validation only runs once all three required keys are set, so keys can be set one at a time. |
+| `change-view-landscape-client-admin` | Rejects confdb writes whose `config.url` does not start with `http://` or `https://`. |
 
-## Tag Format
+The daemon is installed disabled. Without the required keys it would exit
+non-zero and crash-loop under `restart-condition: on-failure`.
 
-Tags must match the pattern `[a-zA-Z0-9][a-zA-Z0-9-]*` (alphanumeric, hyphens allowed after the first character). Multiple tags are comma-separated with no spaces:
+## confdb
+
+When the configuration is complete and valid, the configure hook runs
+`landscape-client-core --sync-confdb`. This writes the whole configuration as
+one JSON object to the `config` path of the confdb view
+`landscape-client/client-admin` through the `landscape-client-admin` custodian
+plug. Interval keys are written as integers, all other keys as strings, and
+empty keys are omitted.
+
+The daemon still reads its configuration from snap config, not from confdb.
+The `landscape-client-state` plug is declared but not yet used by the code.
+
+## Reading configuration
 
 ```bash
-sudo snap set landscape-client-core tags=production,arm64,factory-floor
+snap get landscape-client-core
+snap get landscape-client-core url
 ```
+
+Runtime state (device identity, sequence numbers, queued messages) is kept
+separately in `$SNAP_COMMON`; see
+[architecture.md](architecture.md#persistent-state). Do not edit those files.

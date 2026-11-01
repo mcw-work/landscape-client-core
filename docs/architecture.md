@@ -1,179 +1,254 @@
 # Architecture
 
-## Overview
+`landscape-client-core` is one daemon process (`cmd/landscape-client-core`)
+plus an interactive configuration wizard (`cmd/landscape-client-core-config`).
+The daemon talks to the Landscape server over HTTPS and to the device through
+snapd, procfs/sysfs, logind and `lshw`.
 
-`landscape-client-core` is structured as three concurrent subsystems coordinated by the main entry point. Each subsystem runs its own goroutine loop and communicates with the others through well-defined interfaces.
+## Components
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  main.go                                                    │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
-│  │   Exchange   │  │   Monitor    │  │      Ping        │  │
-│  │   Runner     │  │   Runner     │  │      Loop        │  │
-│  └──────┬───────┘  └──────┬───────┘  └────────┬─────────┘  │
-└─────────┼────────────────┼──────────────────┼─────────────┘
-          │                │                  │
-          │◄───────────────┘ MessageSink       │ TriggerExchange
-          │                                   │
-    ┌─────▼─────────────────────────────────◄─┘
-    │  internal/exchange                       │
-    │  • Outbound queue                        │
-    │  • Sequence tracking                     │
-    │  • Message dispatch                      │
-    └──┬──────────────┬───────────────────────┘
-       │              │
-  transport       manager.Runner
-  (HTTP POST)     • InstallSnap
-       │          • RemoveSnap
-  bpickle         • RefreshSnap
-  encode/decode   • StartService
-                  • StopService
-                  • RestartService
-                  • Shutdown
-                  • ScriptExec
-                       │
-                  transport
-                  (attachment fetch)
-```
+```mermaid
+flowchart LR
+    server[("Landscape server<br/>/message-system<br/>/ping<br/>/attachment/ID")]
 
-## Packages
+    subgraph daemon["landscape-client-core daemon"]
+        direction LR
+        monitor["monitor.Runner<br/>15 plugins"]
+        exchange["exchange.Exchange<br/>queue, sequencing, dispatch"]
+        manager["manager.Runner<br/>command handlers"]
+        ping["ping.Pinger"]
+        watchdog["watchdog"]
+        transport["transport.Client<br/>HTTPS, proxy, CA pinning"]
+        bpickle["bpickle codec"]
+    end
 
-### `cmd/landscape-client-core`
+    subgraph disk["$SNAP_COMMON"]
+        state[("state.json<br/>identity, sequences,<br/>plugin state")]
+        queue[("queue.json<br/>unsent messages")]
+        scripts[("scripts/OP-ID/")]
+    end
 
-The daemon entry point. Responsible for:
+    subgraph device["Device"]
+        snapd["snapd<br/>/run/snapd.socket"]
+        procfs["/proc, /sys,<br/>extrausers"]
+        logind["logind<br/>D-Bus"]
+        lshw["lshw"]
+    end
 
-- Loading configuration via `snapctl`
-- Constructing and wiring all subsystems
-- Starting the three concurrent goroutine groups (exchange, monitor, ping)
-- Handling `SIGTERM`/`SIGINT` for graceful shutdown with a 5-second grace period
+    monitor -- "Send(msg)" --> exchange
+    exchange -- "Subscribe callbacks" --> manager
+    manager -- "SendResult" --> exchange
+    ping -- "TriggerExchange()" --> exchange
+    watchdog -. "StaleSources()" .-> monitor
 
-The binary also accepts a `--validate-config` flag, used by the snap `configure` hook to check configuration without starting the daemon.
+    exchange --> bpickle
+    exchange --> transport
+    ping --> transport
+    manager -- "attachments" --> transport
+    transport <--> server
 
-### `cmd/landscape-client-core-config`
+    exchange <--> state
+    exchange <--> queue
+    monitor <--> state
+    manager --> scripts
 
-An interactive terminal wizard for configuring the client. Collects all settings (account name, registration key, server URL, proxy, tags, etc.) then writes them with a single batched `snapctl set` call to avoid triggering the configure hook in an incomplete state.
-
-### `internal/exchange`
-
-The core exchange loop. Runs on a ticker (normal: 15 min, urgent: 1 min). On each tick it:
-
-1. Builds the outbound payload from queued messages.
-2. bpickle-encodes the payload and POST's it to the server.
-3. Decodes the response and dispatches inbound messages to registered handlers.
-4. Persists updated sequence numbers and device identities.
-
-Provides three key interfaces consumed by the other subsystems:
-
-- `MessageSink` — for monitor plugins to enqueue outbound messages.
-- `CommandSource` — for the manager to subscribe to inbound message types.
-- `ResultSink` — for handlers to send `operation-result` messages back to the server.
-
-### `internal/manager`
-
-Receives inbound management commands from the exchange and dispatches them to `Handler` implementations. Each handler runs in its own goroutine. Panics are caught and reported as failures. See [Management Commands](management-commands.md).
-
-### `internal/monitor`
-
-Runs a collection of system-metric plugins. Each plugin loops independently with exponential backoff on failure (1 s → 5 min). Plugins post metrics to the exchange `MessageSink`. See [Monitoring Plugins](monitoring-plugins.md).
-
-### `internal/ping`
-
-Lightweight periodic poll. POSTs the device's insecure-id to the ping endpoint every interval (default 30 s). If the server indicates pending messages, calls `Exchange.TriggerExchange()` to wake the exchange loop immediately.
-
-### `internal/transport`
-
-HTTPS client supporting TLS certificate pinning, HTTP/HTTPS proxies, configurable timeouts, and a custom `User-Agent` header. Used by exchange (for full message POST), ping (for ping form POST), and the script handler (for attachment GET).
-
-### `internal/config`
-
-Reads configuration from snapctl and returns a typed `Config` struct. Validates all required fields and parses duration strings. Used by main and the configure hook.
-
-### `internal/persist`
-
-Atomic JSON state file for device identity (secure-id, insecure-id), sequence numbers, accepted-types hash, and per-plugin state. Writes are done via `rename(2)` to prevent partial writes.
-
-### `internal/bpickle`
-
-Encoder/decoder for Landscape's binary pickle wire format. See [Wire Protocol](protocol.md).
-
-### `internal/snapd`
-
-Snapd REST API client. Used by manager handlers (snap install/remove/refresh/service) and monitor plugins (RebootRequired, ComputerInfo, SnapPackages, SnapServices).
-
-## Data Flow
-
-### Startup
-
-```
-main() → config.Load()
-       → persist.Store{}
-       → transport.New()
-       → snapd.New()
-       → exchange.New() ──── subscribes manager handlers
-       → monitor.Runner.Register() ── passes exchange as MessageSink
-       → ping.New()
-       → goroutine: exchange.Run()
-       → goroutine: monitor.Runner.Run()
-       → goroutine: ping.Pinger.Run()
-       → wait for SIGTERM/SIGINT → cancel context → 5s grace
+    monitor --> procfs
+    monitor --> snapd
+    monitor --> lshw
+    manager --> snapd
+    manager --> logind
 ```
 
-### Outbound (metrics → server)
-
-```
-plugin.Run() → exchange.Send(msg)
-             [queued in Exchange.pending]
-exchange tick → build payload → bpickle.Marshal()
-             → transport.Post() → HTTP 200
-             → bpickle.Unmarshal(response)
-             → store.Update(sequence++)
-```
-
-### Inbound (commands → results)
-
-```
-exchange.performExchange() → dispatch inbound msg
-→ manager.Runner.dispatch()
-→ handler.Handle(ctx, msg, resultSink)
-→ snapd operation / script exec
-→ resultSink.SendResult() or SendResultCode()
-→ exchange queues "operation-result" message
-→ delivered on next exchange
-```
-
-### Ping → urgent exchange
-
-```
-ping.doPing() → POST insecure_id
-→ response {"messages": true}
-→ exchange.TriggerExchange()   ← wakes exchange immediately
-```
-
-## State Persistence
-
-The persist store lives at `$SNAP_COMMON/client.state` (default `/var/snap/landscape-client-core/common/client.state`). It is a single JSON file updated atomically via temp-file rename. Fields:
-
-| Field | Purpose |
+| Package | Responsibility |
 |---|---|
-| `SecureID` | Device identity issued by server on registration |
-| `InsecureID` | Public device identifier used for ping |
-| `ServerUUID` | Server instance identity |
-| `ExchangeToken` | Rotating token for exchange authentication |
-| `OutboundSequence` | Count of messages sent so far |
-| `NextExpectedFromServer` | ACK for inbound messages |
-| `AcceptedTypes` | List of message types the server accepts |
-| `AcceptedTypesHash` | MD5 of accepted types (avoids re-sending if unchanged) |
-| `PluginState` | Per-plugin state keyed by plugin name |
+| `cmd/landscape-client-core` | Loads config, wires every component, runs them, handles `SIGTERM`/`SIGINT`. Also implements the `--validate-config` and `--sync-confdb` modes used by the configure hook. |
+| `cmd/landscape-client-core-config` | Interactive wizard that writes all settings in one `snapctl set`. |
+| `internal/config` | Reads snap config through `snapctl get`, applies defaults, validates. |
+| `internal/exchange` | Outbound queue, message sequencing, registration, the exchange loop, inbound dispatch. |
+| `internal/monitor` | Plugin runner and the 15 telemetry plugins. |
+| `internal/manager` | Handlers for inbound commands (snaps, services, shutdown, scripts, cancel). |
+| `internal/ping` | Cheap periodic poll that wakes the exchange when the server has messages. |
+| `internal/transport` | HTTP client: TLS 1.2+, optional custom CA, proxies, timeouts, response size cap. |
+| `internal/bpickle` | Encoder/decoder for Landscape's wire format. |
+| `internal/persist` | Atomic JSON state file with backup recovery. |
+| `internal/snapd` | Minimal snapd REST client over the Unix socket. |
+| `internal/runcmd` | Runs external commands with a timeout. |
+| `internal/version` | Version string and `User-Agent`, injected at build time. |
 
-## Snap Confinement
+## Goroutines and lifecycle
 
-The snap uses **strict confinement**. Relevant implications:
+`run()` in [main.go](../cmd/landscape-client-core/main.go) starts four
+long-lived goroutines in an `errgroup`. If any of them returns an error the
+group context is cancelled and the process exits non-zero, so snapd's
+`restart-condition: on-failure` restarts it.
 
-- All persistent data is under `$SNAP_COMMON`.
-- Configuration is read and written via `snapctl`, not flat files.
-- Network access is provided by the `network` plug.
-- Snap management requires the `snapd-control` plug.
-- Hardware introspection uses `system-observe` and `hardware-observe`.
-- Shutdown/reboot requires the `shutdown` plug.
-- Mount point enumeration requires `mount-observe`.
-- User switching in script execution is **not supported** under strict confinement; the `username` field is ignored.
+```mermaid
+flowchart TB
+    main["realMain<br/>config.Load, persist.New, transport.New"] --> run["run()"]
+    run --> eg{{"errgroup"}}
+    eg --> ex["exchange.Run"]
+    eg --> mon["monitor.Runner.Run"]
+    eg --> pg["ping.Pinger.Run"]
+    eg --> wd["watchdog, every 30 s"]
+    mon --> p1["plugin goroutine x15<br/>restart with backoff 1 s to 5 min"]
+    ex -- "inbound command" --> mgr["manager handler goroutine<br/>bounded by semaphore, default 100"]
+```
+
+- **Monitor plugins** each run in their own goroutine. A plugin that returns an
+  error or panics is restarted after a backoff that starts at 1 s and doubles to
+  a 5 min cap. The backoff resets after a run that lasted at least 30 s.
+- **Manager handlers** run one goroutine per command. A weighted semaphore caps
+  concurrency (`--handler-concurrency`, default 100) and a `WaitGroup` tracks
+  them for shutdown.
+- **Watchdog.** Every plugin records a heartbeat on each tick. Every 30 s the
+  watchdog flags any plugin that has not beaten for `max(3 × interval, 2 min)`.
+  A stale plugin means a goroutine is wedged (for example blocked in a
+  syscall), so the daemon exits non-zero and snapd restarts it.
+
+### Shutdown
+
+```mermaid
+sequenceDiagram
+    participant OS as snapd / signal
+    participant Main as run()
+    participant Ex as exchange
+    participant Mgr as manager
+    OS->>Main: SIGTERM
+    Main->>Ex: cancel context
+    Ex->>Ex: final exchange (5 s budget)
+    Ex->>Ex: write queue.json
+    Main->>Mgr: WaitWithTimeout(5 s)
+    Main->>Main: wait for errgroup (5 s)
+    Main-->>OS: exit
+```
+
+## Outbound: telemetry to the server
+
+```mermaid
+sequenceDiagram
+    participant P as plugin
+    participant Ex as exchange
+    participant Disk as state.json / queue.json
+    participant S as server
+
+    P->>Ex: Send(msg) — queued, does not wake the loop
+    Note over Ex: timer fires, or woken by ping,<br/>an operation result, or a backlog
+    Ex->>Ex: prepend "register" if not registered
+    Ex->>Ex: take up to 100 messages,<br/>drop types the server does not accept
+    Ex->>S: POST /message-system (bpickle)
+    alt transport error or non-2xx
+        Ex->>Ex: re-queue the batch
+    else 200
+        S-->>Ex: next-expected-sequence, token, messages
+        Ex->>Ex: re-queue anything not ACKed
+        Ex->>Ex: handle and dispatch inbound messages
+        Ex->>Disk: update state.json
+    end
+    Ex->>Disk: write queue.json
+```
+
+The next exchange is scheduled as follows:
+
+| Condition | Delay |
+|---|---|
+| Default | `exchange-interval` (900 s) |
+| An `operation-result` is queued, the device is not registered, or it has just registered | `urgent-exchange-interval` (60 s) |
+| The server returned 429 or 5xx | Backoff of 5 min doubling to 2 h, plus up to 20% jitter, if longer than the above |
+| Messages are still queued after a successful exchange | Immediately |
+
+The in-memory and on-disk queue is capped at 1,000 messages. When it overflows
+the oldest telemetry is dropped first; operation results are never dropped.
+
+## Inbound: commands from the server
+
+```mermaid
+sequenceDiagram
+    participant S as server
+    participant Ex as exchange
+    participant R as manager.Runner
+    participant H as handler goroutine
+    participant D as snapd / logind / shell
+
+    S-->>Ex: exchange response with messages
+    alt protocol message (set-id, accepted-types, ...)
+        Ex->>Ex: handled inline
+    else command
+        Ex->>R: subscriber callback (in server order)
+        R->>R: acquire semaphore
+        R->>H: go Handle(ctx, msg)
+        H->>D: perform operation
+        H->>Ex: SendResult / SendResultCode
+        Ex->>Ex: queue operation-result and wake loop
+    end
+    Ex->>S: operation-result on the next exchange
+```
+
+Protocol messages handled inside the exchange are listed in
+[protocol.md](protocol.md#messages-handled-by-the-exchange). Commands handled
+by the manager are in [management-commands.md](management-commands.md). A
+`set-intervals` message is handled by a subscriber in `main` that updates the
+ping interval.
+
+## Ping
+
+```mermaid
+sequenceDiagram
+    participant P as ping.Pinger
+    participant S as server /ping
+    participant Ex as exchange
+    loop every ping-interval (30 s)
+        alt not registered (no insecure-id)
+            P->>P: skip
+        else registered
+            P->>S: POST insecure_id=...
+            S-->>P: {messages: true|false}
+            opt messages: true
+                P->>Ex: TriggerExchange()
+            end
+        end
+    end
+```
+
+## Registration
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unregistered
+    Unregistered --> Unregistered: exchange sends "register"<br/>(every urgent interval)
+    Unregistered --> Registered: set-id<br/>(store secure-id, insecure-id,<br/>clear plugin state)
+    Registered --> Unregistered: unknown-id<br/>(clear both IDs)
+    Registered --> Registered: resynchronize<br/>(clear plugin state, ack)
+```
+
+## Persistent state
+
+All files live in `$SNAP_COMMON` (`/var/snap/landscape-client-core/common`).
+
+| File | Contents | Written by |
+|---|---|---|
+| `state.json` | `secure_id`, `insecure_id`, `server_uuid`, `outbound_sequence`, `next_expected_from_server`, `exchange_token`, `accepted_types`, `accepted_types_hash`, `plugin_state` | exchange after every exchange; plugins via `SetPluginState` |
+| `state.json.old` | Previous good copy, used if `state.json` is corrupt at load | every save |
+| `queue.json` | Unsent outbound messages | exchange after every attempt and at shutdown |
+| `scripts/<operation-id>/` | Script and attachments while a script runs; removed afterwards | `execute-script` handler |
+
+Every write goes to a temp file, is `fsync`ed and then renamed over the target.
+All writes to `state.json` are read-modify-write under one mutex, so the
+exchange and plugins never overwrite each other's fields.
+
+## Snap packaging
+
+[snapcraft.yaml](../snap/snapcraft.yaml) defines:
+
+- **`landscape-client-core`** — the daemon. Installed disabled
+  (`install-mode: disable`); the configure hook enables it once configured.
+  Runs with `GOMEMLIMIT=64MiB` and `GOMAXPROCS=2`.
+- **`config`** — the wizard.
+- **Plugs:** `network`, `snapd-control`, `system-observe`, `hardware-observe`,
+  `shutdown`, `log-observe`, `mount-observe`, plus two confdb custodian plugs
+  (`landscape-client-admin`, `landscape-client-state`).
+- **Hooks:** `install`, `post-refresh`, `configure`, and
+  `change-view-landscape-client-admin`. See
+  [configuration.md](configuration.md#snap-hooks).
+
+Under strict confinement the daemon runs as root and cannot switch users, so
+the `username` field of `execute-script` is ignored.

@@ -1,151 +1,69 @@
-# Management Commands
+# Management commands
 
-The Landscape server can send management commands to the client. Each command is an inbound message dispatched by the exchange loop to the appropriate handler. Handlers run in individual goroutines and report results back to the server via `operation-result` messages.
+The server sends commands as inbound messages. The exchange passes each one to
+`manager.Runner`, which runs the matching handler in its own goroutine (see
+[architecture.md](architecture.md#inbound-commands-from-the-server)). Every
+command carries an `operation-id`, and the handler reports back with an
+`operation-result`.
 
-## Result Format
+## Result message
 
-Every handler sends an `operation-result` message on completion:
+| Field | Value |
+|---|---|
+| `operation-id` | Copied from the command. |
+| `status` | `6` succeeded, `5` failed. |
+| `result-text` | Output or error text. |
+| `result-code` | Only set by `execute-script`. |
+| `timestamp` | Unix time when the result was queued. |
 
-| Field | Type | Description |
+Queuing a result wakes the exchange loop, so results reach the server without
+waiting for the next scheduled exchange.
+
+## Commands
+
+| Type | Fields | What it does |
 |---|---|---|
-| `operation-id` | int64 | Echoed from the inbound command |
-| `status` | int | `6` (success) or `5` (failure) |
-| `result-text` | string | Human-readable output or error message |
-| `result-code` | int64 | *(optional)* Exit-code style result (see per-command docs) |
+| `install-snaps` | `snaps`: list of `{name, args: {channel, classic}}` | Installs each snap in order. |
+| `remove-snaps` | `snaps`: list of `{name}` | Removes each snap in order. |
+| `refresh-snaps` | `snaps`: list of `{name}` | Refreshes each snap on its tracked channel. |
+| `start-snap-service` | `snap`, `service` | Starts `<snap>.<service>`. |
+| `stop-snap-service` | `snap`, `service` | Stops `<snap>.<service>`. |
+| `restart-snap-service` | `snap`, `service` | Restarts `<snap>.<service>`. |
+| `shutdown` | `reboot` (bool) | Powers off, or reboots if `reboot` is true. |
+| `execute-script` | see [remote-script-execution.md](remote-script-execution.md) | Runs a script. |
+| `cancel-operation` | `operation-id` of the target | Cancels a running operation. Sends no result itself. |
 
-## Snap Commands
+### Snap commands
 
-All snap commands use the snapd REST API and wait up to 10 minutes for the change to complete.
+Each snap is sent to snapd (`POST /v2/snaps/<name>`), and the handler waits up
+to 10 minutes for the snapd change to finish before moving to the next one. The
+first failure stops the list and is reported as `status=5` with snapd's error.
+After the whole list succeeds the client sends a fresh `snaps` message straight
+away rather than waiting for the next 30-minute report.
 
-### `install-snap`
+### Service commands
 
-Installs a snap package.
+These post one action to snapd (`POST /v2/apps`). Success means snapd accepted
+the request; the handler does not wait for the service to change state.
 
-**Inbound fields:**
+### Shutdown
 
-| Field | Type | Description |
-|---|---|---|
-| `name` | string | Snap name |
-| `channel` | string | *(optional)* Channel (e.g. `stable`, `edge`). Defaults to snapd's default channel |
-| `classic` | bool | *(optional)* Install in classic confinement |
+The handler queues `status=6` first, because the reboot kills the process,
+then calls logind over D-Bus (`org.freedesktop.login1.Manager.PowerOff` or
+`Reboot`) with a 30 s timeout. If that call fails it sends a second result with
+`status=5`. Needs the `shutdown` plug.
 
-**On success:** `status=6`
+### Cancellation
 
-**On failure:** `status=5`, `result-text` contains the snapd error message.
+Snap, service and script handlers register a cancel function under their
+`operation-id`. `cancel-operation` calls it, which aborts the snapd wait or
+kills the script. The cancelled handler reports its own failure result.
 
----
+## Errors
 
-### `remove-snap`
-
-Removes an installed snap package.
-
-**Inbound fields:**
-
-| Field | Type | Description |
-|---|---|---|
-| `name` | string | Snap name to remove |
-
-**On success:** `status=6`
-
-**On failure:** `status=5`
-
----
-
-### `refresh-snap`
-
-Refreshes (updates) one or more snap packages.
-
-**Inbound fields:**
-
-| Field | Type | Description |
-|---|---|---|
-| `name` | string | Snap name to refresh |
-| `channel` | string | *(optional)* Switch to this channel |
-
-**On success:** `status=6`
-
-**On failure:** `status=5`
-
----
-
-## Service Commands
-
-Service commands manage individual snap services via the snapd REST API.
-
-### `start-snap-service`
-
-Starts a snap service.
-
-**Inbound fields:**
-
-| Field | Type | Description |
-|---|---|---|
-| `snap` | string | Snap name |
-| `service` | string | Service name within the snap |
-
----
-
-### `stop-snap-service`
-
-Stops a snap service.
-
-**Inbound fields:**
-
-| Field | Type | Description |
-|---|---|---|
-| `snap` | string | Snap name |
-| `service` | string | Service name within the snap |
-
----
-
-### `restart-snap-service`
-
-Restarts a snap service.
-
-**Inbound fields:**
-
-| Field | Type | Description |
-|---|---|---|
-| `snap` | string | Snap name |
-| `service` | string | Service name within the snap |
-
----
-
-## System Commands
-
-### `shutdown`
-
-Shuts down or reboots the device. The result message is sent to the server **before** the shutdown command is executed to ensure delivery.
-
-**Inbound fields:**
-
-| Field | Type | Description |
-|---|---|---|
-| `reboot` | bool | If `true`, reboot the device. If `false` (or absent), power off |
-| `delay` | int64 | *(optional)* Delay in minutes before shutdown |
-| `operation-id` | int64 | Operation identifier |
-
-**Notes:**
-- The handler always reports success before shutting down.
-- Uses `systemctl poweroff` or `systemctl reboot` depending on the `reboot` flag.
-- Requires the `shutdown` snap plug.
-
----
-
-### `execute-script`
-
-Executes a script on the device. See [Remote Script Execution](remote-script-execution.md) for full details.
-
----
-
-## Error Handling
-
-If a handler returns an error or panics:
-
-- The panic is caught by the manager runner.
-- `status=5` (failed) is sent with the error message or panic description as `result-text`.
-- The goroutine exits cleanly; subsequent commands for the same type will still be dispatched.
-
-## Operation Timeout
-
-Snap install/remove/refresh operations time out after **10 minutes**. If the operation does not complete within this time, the handler returns `status=5` with a timeout error message.
+- A panic in a handler is recovered and reported as `status=5` with the panic
+  text. Other commands are unaffected.
+- A command missing `operation-id`, or a service command missing `snap` or
+  `service`, is logged and dropped with no result.
+- If the concurrency limit cannot be acquired before shutdown, the command is
+  reported as `status=5`.
